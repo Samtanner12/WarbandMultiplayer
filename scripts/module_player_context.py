@@ -34,7 +34,10 @@ LOOT_TROOP, LOOT_SLOTS = 'trp_household_possessions', 96
 MAX_OPTIONS = 12
 SERVER = multiplayer_event_multiplayer_campaign_server_events
 CLIENT = multiplayer_event_multiplayer_campaign_client_events
-EV_MENU_STRING = 129              # string event, read in game_receive_network_message
+# Network message types are 7 bits (0-127) and all are taken. Menu strings reuse
+# the admin welcome-message type, which otherwise only travels client to server;
+# the client treats it as mirror text only while a mirror event announced one.
+EV_MENU_STRING = multiplayer_event_admin_set_welcome_message
 # host -> client
 EV_LOOT_SLOT, EV_PRISONER_OFFER = 84, 86
 EV_MENU_BEGIN, EV_MENU_OPTION, EV_MENU_SHOW, EV_MENU_CLOSE, EV_MENU_MESSAGE = 95, 96, 97, 98, 99
@@ -237,9 +240,11 @@ def install_native(scripts):
                     ops[i] = (call_script, 'script_coop_ctx_start_encounter', op[1], op[4], op[5], op[6])
         if name == 'game_receive_network_message':
             ops[0:0] = [(store_script_param, ':mirror_event', 2),
-                (try_begin), (eq, ':mirror_event', EV_MENU_STRING), (neg|multiplayer_is_server),
+                (assign, ':mirror_handled', 0),
+                (try_begin), (eq, ':mirror_event', EV_MENU_STRING), (neg|multiplayer_is_server), (gt, '$g_mirror_expect', 0),
                     (call_script, 'script_coop_menu_mirror_string'),
-                (try_end), (neq, ':mirror_event', EV_MENU_STRING)]
+                (assign, ':mirror_handled', 1),
+                (try_end), (eq, ':mirror_handled', 0)]
         if name == 'coop_trade_client_diff_and_send':
             # The loot screen reuses the trade close-diff against its own troop.
             for i, op in enumerate(ops):
@@ -554,7 +559,7 @@ def client_scripts():
         (try_begin), (eq, '$g_mirror_expect', 2), (display_message, '@{s0}'),
         (else_try), (eq, '$g_mirror_expect', 1), (assign, reg5, '$g_mirror_count'),
             (dict_set_str, '$g_mirror_dict', '@mo{reg5}', s0), (val_add, '$g_mirror_count', 1),
-        (else_try), (dict_set_str, '$g_mirror_dict', '@mtext', s0),
+        (else_try), (eq, '$g_mirror_expect', 3), (dict_set_str, '$g_mirror_dict', '@mtext', s0),
         (try_end), (assign, '$g_mirror_expect', 0)]),
     # Client: a Native screen opened by the host closed; report it.
     ('coop_ctx_client_screen_settle', [
@@ -631,7 +636,7 @@ def client_scripts():
 def client_server_events():
     """Client handlers for the mirror protocol, placed in the server-event prefix."""
     return [(else_try), (eq, ':retained_event', EV_MENU_BEGIN),
-            (store_script_param, '$g_mirror_mesh', 2), (assign, '$g_mirror_count', 0), (assign, '$g_mirror_expect', 0),
+            (store_script_param, '$g_mirror_mesh', 2), (assign, '$g_mirror_count', 0), (assign, '$g_mirror_expect', 3),
         (else_try), (eq, ':retained_event', EV_MENU_OPTION),
             (store_script_param, ':native_option', 2), (multiplayer_get_my_player, ':me'),
             (store_add, ':map_slot', OPTION_MAP_BASE, '$g_mirror_count'), (player_set_slot, ':me', ':map_slot', ':native_option'),

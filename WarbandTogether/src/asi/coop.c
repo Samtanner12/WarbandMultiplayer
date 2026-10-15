@@ -735,10 +735,26 @@ static void dev_autostart_pump(void) {
     }
 }
 
+/* Logs long frames once a world is loaded; their spacing names the periodic
+   work behind a stutter (1 s triggers, game hours, network bursts). */
+static void hitch_probe(void) {
+    static LARGE_INTEGER freq, last;
+    LARGE_INTEGER now;
+    double ms;
+    QueryPerformanceCounter(&now);
+    if (!freq.QuadPart) { QueryPerformanceFrequency(&freq); last = now; return; }
+    ms = (double)(now.QuadPart - last.QuadPart) * 1000.0 / (double)freq.QuadPart;
+    last = now;
+    if (ms >= 80.0 && ms < 5000.0 && *(void **)ADDR_CUR_GAME)
+        coop_log("[hitch] %.0f ms frame at tick=%lu mode=%d\n", ms, GetTickCount(),
+                 *(int *)ADDR_MAP_INTERACTION_MODE);
+}
+
 static void __cdecl autojoin_framemove_pre(void) {
     static int   s_active = 0;   /* 0 idle, else the STEAM_AUTOJOIN_* kind */
     static DWORD s_arm_tick = 0;
     static int   s_navs = 0;
+    hitch_probe();
     apply_campaign_clock();
     pump_retained_campaign_result();
     full_host_probe_pump();

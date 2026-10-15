@@ -53,6 +53,16 @@ class Build(unittest.TestCase):
             self.assertTrue(mentions(built[name],'$g_ctx_party'),name)
     def test_mirror_menus_exist(self):
         self.assertIn('coop_menu_mirror',menus);self.assertIn('coop_menu_mirror_close',menus)
+    def test_menu_strings_fit_the_7_bit_message_type(self):
+        # The engine writes message types in 7 bits; 129 arrived as type 1.
+        self.assertLess(ctx.EV_MENU_STRING,128)
+        sends=[op for name in built if name.startswith('coop_menu_show_') for op in built[name]
+               if isinstance(op,tuple) and op[0] in (multiplayer_send_string_to_player,multiplayer_send_int_to_player,
+                   multiplayer_send_2_int_to_player,multiplayer_send_3_int_to_player,multiplayer_send_4_int_to_player)]
+        self.assertTrue(sends)
+        for op in sends:self.assertLess(op[2],128,op)
+        # Mirror text is consumed only when announced, so the real event still works.
+        self.assertTrue(mentions(built['game_receive_network_message'],'$g_mirror_expect'))
     def test_loot_screen_settles_against_its_own_troop(self):
         ops=built['coop_trade_client_diff_and_send']
         self.assertTrue(mentions(ops,'$g_retained_loot_merchant'))
