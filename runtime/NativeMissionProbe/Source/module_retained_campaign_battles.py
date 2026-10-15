@@ -5,6 +5,7 @@ from header_operations import *
 from header_triggers import *
 from header_mission_templates import *
 from module_constants import *
+import module_player_context as player_context
 
 PARTICIPANT=6015
 ROSTER_SPAWNED=6016
@@ -328,6 +329,9 @@ def install_scripts(scripts):
             # Keep the existing dispatch try nesting intact: prefix a separate
             # handler, then prevent event 50 from entering legacy dispatch.
             out=[(store_script_param,':player_no',1),(store_script_param,':event_type',2),
+                (try_begin),(eq,':event_type',player_context.EV_MENU_CHOOSE),(store_script_param,':native_option',3),
+                    (call_script,'script_coop_menu_choose',':player_no',':native_option'),(try_end),
+                (neq,':event_type',player_context.EV_MENU_CHOOSE),
                 (try_begin),(eq,':event_type',50),(store_script_param,':join_side',3),
                 (call_script,'script_coop_retained_reinforce',':player_no',':join_side'),
                 (eq,reg0,0),(multiplayer_send_int_to_player,':player_no',multiplayer_event_multiplayer_campaign_server_events,88),
@@ -412,7 +416,9 @@ def install_scripts(scripts):
                 (else_try),(eq,':retained_event',89),
                     (store_script_param,reg1,2),(store_script_param,reg2,3),
                     (display_message,'@Your party gained {reg1} experience and you received {reg2} denars.',0x00a4d9a2),
-                (try_end),(neq,':retained_event',75),(neq,':retained_event',76),
+                ]+player_context.client_server_events()+[
+                (try_end)]+[(neq,':retained_event',event) for event in player_context.CLIENT_EVENT_IDS]+[
+                (neq,':retained_event',75),(neq,':retained_event',76),
                 (neq,':retained_event',78),
                 (neq,':retained_event',79),(neq,':retained_event',83),(neq,':retained_event',84),(neq,':retained_event',85),
                 (neq,':retained_event',86),(neq,':retained_event',87),(neq,':retained_event',88),

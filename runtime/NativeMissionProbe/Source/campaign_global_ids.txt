@@ -1627,3 +1627,16 @@ g_retained_debrief_done
 g_retained_banner_generation
 g_retained_banner_count
 g_retained_reject_reason
+g_mirror_count
+g_mirror_mesh
+g_mirror_expect
+g_ctx_player
+g_ctx_party
+g_ctx_troop
+g_ctx_menu_close
+g_ctx_menu_battle
+g_ctx_menu_mesh
+g_ctx_menu_next
+g_mirror_dict
+g_mirror_dict_ready
+$g_coop_legacy_encounter_menu

@@ -909,5 +909,16 @@ script_coop_retained_take_prisoners = 907
 script_coop_retained_release_prisoners = 908
 script_coop_retained_open_prisoners = 909
 script_coop_retained_prisoner_diff = 910
+script_coop_ctx_enter = 911
+script_coop_ctx_exit = 912
+script_cf_coop_ctx_encountered_attacks = 913
+script_cf_coop_ctx_encountered_not_attacking = 914
+script_coop_ctx_send_message = 915
+script_coop_menu_show_simple_encounter = 916
+script_coop_menu_choose_simple_encounter = 917
+script_coop_menu_present = 918
+script_coop_menu_choose = 919
+script_coop_ctx_start_encounter = 920
+script_coop_menu_mirror_string = 921
 
 

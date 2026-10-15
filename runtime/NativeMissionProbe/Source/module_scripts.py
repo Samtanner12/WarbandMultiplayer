@@ -51395,3 +51395,8 @@ for load_name, load_operations in scripts:
 # RETAINED_CAMPAIGN_PARTICIPANTS
 from module_retained_campaign_battles import install_native_scripts
 install_native_scripts(scripts)
+
+# PLAYER_CONTEXT
+from module_player_context import install_native as install_player_context
+install_player_context(scripts)
+

@@ -232,3 +232,5 @@ menu_coop_retained_join = 230
 menu_coop_retained_debrief = 231
 menu_coop_retained_loot = 232
 menu_coop_retained_prisoners = 233
+menu_coop_menu_mirror = 234
+menu_coop_menu_mirror_close = 235

@@ -15450,3 +15450,8 @@ for probe_index, probe_menu in enumerate(game_menus):
 # RETAINED_CAMPAIGN_PARTICIPANTS
 from module_retained_campaign_battles import install_menus
 install_menus(game_menus)
+
+# PLAYER_CONTEXT
+from module_player_context import install_menus as install_mirror_menus
+install_mirror_menus(game_menus)
+
