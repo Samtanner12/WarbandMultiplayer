@@ -113,6 +113,8 @@ def menu_ops(menu):
     for option in menu[5]: ops += list(option[1]) + list(option[3])
     return ops
 
+CTX_STACK_BASE = BANK_HOST_BASE + 900   # holder slots: players whose context is suspended
+
 def party_save(party, base):
     ops = [(party_get_num_companion_stacks, ':bank_n', party), (val_min, ':bank_n', PARTY_STACKS),
            (player_set_slot, ':player', base, ':bank_n'),
@@ -174,22 +176,47 @@ def install_native(scripts):
     bank = sorted(g for g in referenced if PLAYER_SCOPED.match(g))
     write_report(closure, bank, sorted(referenced - set(bank)))
 
-    enter = [(store_script_param, ':player', 1), (store_add, CTX_PLAYER, ':player', 1),
-             (player_get_party_id, CTX_PARTY, ':player'), (player_get_troop_id, CTX_TROOP, ':player'),
-             (call_script, 'script_coop_player_ctx_begin', ':player')]
-    leave = [(store_script_param, ':player', 1), (call_script, 'script_coop_player_ctx_end', 1)]
+    # Bank load/save for one player: globals into player slots, parties serialized.
+    load = [(store_script_param, ':player', 1)]
+    save = [(store_script_param, ':player', 1)]
     for i, name in enumerate(bank):
-        enter += [(troop_set_slot, BANK_HOLDER, BANK_HOST_BASE + i, name), (player_get_slot, name, ':player', BANK_PLAYER_BASE + i)]
-        leave += [(player_set_slot, ':player', BANK_PLAYER_BASE + i, name), (troop_get_slot, name, BANK_HOLDER, BANK_HOST_BASE + i)]
+        load += [(player_get_slot, name, ':player', BANK_PLAYER_BASE + i)]
+        save += [(player_set_slot, ':player', BANK_PLAYER_BASE + i, name)]
     for i, party in enumerate(BANKED_PARTIES):
-        enter += party_load(party, PARTY_BANK_BASE + i * PARTY_STRIDE)
-        leave += party_save(party, PARTY_BANK_BASE + i * PARTY_STRIDE)
+        load += party_load(party, PARTY_BANK_BASE + i * PARTY_STRIDE)
+        save += party_save(party, PARTY_BANK_BASE + i * PARTY_STRIDE)
+    activate = [(store_script_param, ':player', 1), (store_add, CTX_PLAYER, ':player', 1),
+                (player_get_party_id, CTX_PARTY, ':player'), (player_get_troop_id, CTX_TROOP, ':player'),
+                (call_script, 'script_coop_ctx_bank_load', ':player'),
+                (call_script, 'script_coop_player_ctx_begin', ':player')]
     if '$players_kingdom' in bank:
         # The player's realm, not Native's single-player kingdom.
-        enter += [(store_faction_of_party, '$players_kingdom', CTX_PARTY)]
-    leave += [(assign, CTX_PLAYER, 0), (assign, CTX_PARTY, 0), (assign, CTX_TROOP, 0)]
+        activate += [(store_faction_of_party, '$players_kingdom', CTX_PARTY)]
+    host_save = [(troop_set_slot, BANK_HOLDER, BANK_HOST_BASE + i, name) for i, name in enumerate(bank)]
+    host_restore = [(troop_get_slot, name, BANK_HOLDER, BANK_HOST_BASE + i) for i, name in enumerate(bank)]
+    # Contexts nest (a battle started from one player's menu admits others):
+    # the open context is suspended onto a stack and resumed on exit.
+    enter = [(store_script_param, ':player', 1),
+        (try_begin), (eq, '$g_ctx_depth', 0)] + host_save + [
+        (else_try),
+            (store_sub, ':outer', CTX_PLAYER, 1),
+            (call_script, 'script_coop_player_ctx_end', 0), (call_script, 'script_coop_ctx_bank_save', ':outer'),
+            (store_add, ':stack_slot', CTX_STACK_BASE, '$g_ctx_depth'), (troop_set_slot, BANK_HOLDER, ':stack_slot', ':outer'),
+        (try_end),
+        (val_add, '$g_ctx_depth', 1),
+        (call_script, 'script_coop_ctx_activate', ':player')]
+    leave = [(store_script_param, ':player', 1),
+        (call_script, 'script_coop_player_ctx_end', 1), (call_script, 'script_coop_ctx_bank_save', ':player'),
+        (val_sub, '$g_ctx_depth', 1), (val_max, '$g_ctx_depth', 0),
+        (try_begin), (eq, '$g_ctx_depth', 0)] + host_restore + [
+            (assign, CTX_PLAYER, 0), (assign, CTX_PARTY, 0), (assign, CTX_TROOP, 0),
+        (else_try),
+            (store_add, ':stack_slot', CTX_STACK_BASE, '$g_ctx_depth'), (troop_get_slot, ':outer', BANK_HOLDER, ':stack_slot'),
+            (call_script, 'script_coop_ctx_activate', ':outer'),
+        (try_end)]
 
-    generated = [('coop_ctx_enter', enter), ('coop_ctx_exit', leave),
+    generated = [('coop_ctx_bank_load', load), ('coop_ctx_bank_save', save), ('coop_ctx_activate', activate),
+        ('coop_ctx_enter', enter), ('coop_ctx_exit', leave),
         ('cf_coop_ctx_encountered_attacks', [(get_party_ai_current_object, ':target', '$g_encountered_party'), (eq, ':target', CTX_PARTY)]),
         ('cf_coop_ctx_encountered_not_attacking', [(get_party_ai_current_object, ':target', '$g_encountered_party'), (neq, ':target', CTX_PARTY)]),
         ('coop_ctx_send_message', [(try_begin), (gt, CTX_PLAYER, 0), (store_sub, ':player', CTX_PLAYER, 1),
@@ -213,6 +240,15 @@ def install_native(scripts):
                 (try_begin), (eq, ':mirror_event', EV_MENU_STRING), (neg|multiplayer_is_server),
                     (call_script, 'script_coop_menu_mirror_string'),
                 (try_end), (neq, ':mirror_event', EV_MENU_STRING)]
+        if name == 'coop_trade_client_diff_and_send':
+            # The loot screen reuses the trade close-diff against its own troop.
+            for i, op in enumerate(ops):
+                if isinstance(op, tuple) and 'trp_find_item_cheat' in op:
+                    ops[i] = tuple(':trade_merchant' if arg == 'trp_find_item_cheat' else arg for arg in op)
+            ops[0:0] = [(assign, ':trade_merchant', 'trp_find_item_cheat'),
+                (try_begin), (gt, '$g_retained_loot_merchant', 0),
+                    (assign, ':trade_merchant', '$g_retained_loot_merchant'), (assign, '$g_retained_loot_merchant', 0),
+                (try_end)]
     scripts += client_scripts()
 
 def send_string(text):
@@ -522,6 +558,8 @@ def client_scripts():
         (try_end), (assign, '$g_mirror_expect', 0)]),
     # Client: a Native screen opened by the host closed; report it.
     ('coop_ctx_client_screen_settle', [
+        # Options shown before the screen belong to the menu that opened it.
+        (try_begin), (gt, '$g_ctx_screen_open', 0), (assign, '$g_mirror_count', 0), (try_end),
         (try_begin), (eq, '$g_ctx_screen_open', 1), (assign, '$g_ctx_screen_open', 0),
             (try_begin), (eq, '$g_coop_trade_screen_open', 1), (assign, '$g_coop_trade_screen_open', 2),
                 (assign, '$g_retained_loot_merchant', LOOT_TROOP),

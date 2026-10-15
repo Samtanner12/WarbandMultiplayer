@@ -53,6 +53,24 @@ class Build(unittest.TestCase):
             self.assertTrue(mentions(built[name],'$g_ctx_party'),name)
     def test_mirror_menus_exist(self):
         self.assertIn('coop_menu_mirror',menus);self.assertIn('coop_menu_mirror_close',menus)
+    def test_loot_screen_settles_against_its_own_troop(self):
+        ops=built['coop_trade_client_diff_and_send']
+        self.assertTrue(mentions(ops,'$g_retained_loot_merchant'))
+        self.assertFalse(any(isinstance(op,tuple) and op[0]==call_script and 'trp_find_item_cheat' in op for op in ops))
+    def test_native_morale_runs_without_a_single_player(self):
+        for name in ['coop_retained_courage_others','coop_retained_courage_death','coop_retained_run_away']:
+            ops=built[name]
+            self.assertFalse(any(isinstance(op,tuple) and op[0] in (agent_is_ally,get_player_agent_no) for op in ops),name)
+            self.assertTrue(any(isinstance(op,tuple) and op[0]==agent_set_slot for op in ops),name)
+        self.assertTrue(mentions(built['coop_retained_courage_death'],'script_cf_coop_retained_agent_side0'))
+        self.assertFalse(mentions(built['coop_retained_run_away'],'script_cf_coop_retained_agent_side0'))
+
+class Nesting(unittest.TestCase):
+    def test_context_suspends_and_resumes_the_outer_player(self):
+        enter=built['coop_ctx_enter'];leave=built['coop_ctx_exit']
+        self.assertTrue(mentions(enter,'script_coop_ctx_bank_save'));self.assertTrue(mentions(enter,'script_coop_ctx_activate'))
+        self.assertTrue(mentions(leave,'script_coop_ctx_bank_save'));self.assertTrue(mentions(leave,'script_coop_ctx_activate'))
+        self.assertTrue(mentions(enter,'$g_ctx_depth'));self.assertTrue(mentions(leave,'$g_ctx_depth'))
 
 offer=built['coop_ctx_take_offer']
 class Host(Authority):

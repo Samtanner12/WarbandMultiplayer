@@ -495,6 +495,37 @@ def install_native_scripts(scripts):
                 (gt,':faction',0),(faction_get_slot,':mesh',':faction',slot_faction_banner),(gt,':mesh',0),
                 (assign,reg0,':mesh'),
             (try_end),(else_try)]+ops+[(try_end)]
+    install_courage_scripts(scripts)
+
+# Native's morale and rout model (lead_charge), copied for the multiplayer
+# battle. Native measures sides against the single player's team
+# (agent_is_ally, get_player_agent_no); here a side is the agent's team and
+# every human-controlled agent counts as Native's player agent.
+COURAGE_SCRIPTS={'apply_effect_of_other_people_on_courage_scores':'coop_retained_courage_others',
+                 'apply_death_effect_on_courage_scores':'coop_retained_courage_death',
+                 'decide_run_away_or_not':'coop_retained_run_away'}
+
+def courage_ops(name,ops):
+    out=[]
+    for i,op in enumerate(ops):
+        if isinstance(op,tuple) and op[0]==agent_is_ally:
+            nxt=ops[i+1] if i+1<len(ops) else None
+            # Native's handicaps for the player's own side have no single side
+            # here; drop them rather than penalize one team.
+            handicap=name=='decide_run_away_or_not' or (isinstance(nxt,tuple) and nxt[0]==val_sub)
+            out.append((eq,1,0) if handicap else (call_script,'script_cf_coop_retained_agent_side0',op[1]))
+        elif op==(neq,':centered_agent_no',':player_agent'):out.append((agent_is_non_player,':centered_agent_no'))
+        elif op==(eq,':agent_no',':player_agent'):out.append((neg|agent_is_non_player,':agent_no'))
+        elif isinstance(op,tuple) and op[0]==get_player_agent_no:out.append((assign,op[1],-1))
+        else:out.append(op)
+    return out
+
+def install_courage_scripts(scripts):
+    native=dict(scripts)
+    for source,target in sorted(COURAGE_SCRIPTS.items()):
+        replace_script(scripts,target,courage_ops(source,list(native[source])))
+    scripts.append(('cf_coop_retained_agent_side0',[
+        (store_script_param,':agent',1),(agent_get_team,':team',':agent'),(store_mod,':side',':team',2),(eq,':side',0)]))
 
 def install_missions(missions):
     for mission in missions:
@@ -536,6 +567,16 @@ def install_missions(missions):
             (ti_on_agent_killed_or_wounded,0,0,[(multiplayer_is_server),(eq,'$g_cycle_result_sent',0)],[
                 (store_trigger_param_1,':dead'),(store_trigger_param_2,':killer'),
                 (call_script,'script_coop_retained_kill_xp',':dead',':killer'),
+                (try_begin),(ge,':dead',0),(call_script,'script_coop_retained_courage_death',':dead',':killer'),(try_end),
+            ]),
+            # Native morale: nearby friends and fleeing comrades move courage;
+            # soldiers below their limit rout (never before 45 s, never heroes).
+            (3,0,0,[(multiplayer_is_server),(eq,'$g_cycle_result_sent',0),(eq,'$g_cycle_armies_spawned',1)],[
+                (call_script,'script_coop_retained_courage_others'),
+                (store_mission_timer_a,':mission_time'),
+                (try_for_agents,':agent'),(agent_is_human,':agent'),(agent_is_alive,':agent'),(agent_is_non_player,':agent'),
+                    (call_script,'script_coop_retained_run_away',':agent',':mission_time'),
+                (try_end),
             ]),
             (ti_after_mission_start,0,0,[(neg|multiplayer_is_server)],[(assign,'$g_retained_retreat_question',0),(assign,'$g_multiplayer_allow_player_banners',0)]),
             (ti_question_answered,0,0,[(neg|multiplayer_is_server)],[
@@ -593,6 +634,12 @@ def install_missions(missions):
                             (agent_set_group,':agent',':group'),
                             (agent_set_slot,':agent',6100,':party'),(agent_set_slot,':agent',6101,':troop'),
                             (try_begin),(troop_is_hero,':troop'),(agent_set_hit_points,':agent',':health',0),(try_end),
+                            # Native's starting courage: level, chance and party morale.
+                            (store_character_level,':courage_level',':troop'),(val_mul,':courage_level',35),
+                            (store_random_in_range,':courage',5000,8000),(val_add,':courage',':courage_level'),
+                            (party_get_morale,':courage_morale',':party'),(val_sub,':courage_morale',70),
+                            (val_mul,':courage_morale',30),(val_add,':courage',':courage_morale'),
+                            (agent_set_slot,':agent',slot_agent_courage_score,':courage'),
                             (try_begin),(eq,':troop',':hero'),(agent_set_slot,':agent',6103,1),
                                 (player_control_agent,':owner',':agent'),(team_set_leader,':owner',':agent'),(try_end),
                             (val_add,':spawned',1),
@@ -613,7 +660,9 @@ def install_missions(missions):
                     (else_try),(player_is_active,':pending_owner'),(assign,':pending',1),(try_end),
                 (try_end),
                 (eq,':pending',0),
+                # Routed soldiers no longer hold the field, as in Native.
                 (try_for_agents,':agent'),(agent_is_human,':agent'),(agent_is_alive,':agent'),
+                    (agent_slot_eq,':agent',slot_agent_is_running_away,0),
                     (agent_get_team,':team',':agent'),
                     (try_begin),(eq,':team',0),(val_add,':side0',1),
                     (else_try),(eq,':team',1),(val_add,':side1',1),(try_end),
