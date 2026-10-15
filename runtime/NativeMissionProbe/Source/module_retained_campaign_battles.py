@@ -30,29 +30,6 @@ def replace_script(scripts,name,ops):
     scripts.append((name,ops))
 
 def install_scripts(scripts):
-    replace_script(scripts,'coop_retained_send_results',[
-        (store_script_param,':player',1),(store_script_param,':winner',2),
-        (assign,':own_killed',0),(assign,':own_wounded',0),(assign,':enemy_killed',0),(assign,':enemy_wounded',0),
-        (player_get_party_id,':own',':player'),(player_get_team_no,':own_team',':player'),
-        (try_for_range,':index',0,'$g_retained_party_count'),
-            (store_add,':slot',COHORT_BASE,':index'),(party_get_slot,':party','$g_cycle_attacker_party',':slot'),
-            (party_get_slot,':team',':party',6015),(party_get_num_companion_stacks,':stacks',':party'),
-            (try_for_range,':stack',0,':stacks'),(party_stack_get_troop_id,':troop',':party',':stack'),
-                (store_mul,':loss',':troop',2),(val_add,':loss',6200),(store_add,':wound',':loss',1),
-                (party_get_slot,':killed',':party',':loss'),(party_get_slot,':wounded',':party',':wound'),
-                (try_begin),(troop_is_hero,':troop'),(val_add,':wounded',':killed'),(assign,':killed',0),(try_end),
-                (try_begin),(eq,':party',':own'),(val_add,':own_killed',':killed'),(val_add,':own_wounded',':wounded'),
-                (else_try),(neq,':team',':own_team'),(val_add,':enemy_killed',':killed'),(val_add,':enemy_wounded',':wounded'),(try_end),
-            (try_end),
-        (try_end),
-        (assign,':result',-1),(try_begin),(eq,':winner',':own_team'),(assign,':result',1),
-        (else_try),(gt,'$g_cycle_retreat_requested',0),(assign,':result',0),(try_end),
-        (player_set_slot,':player',6024,':own_killed'),(player_set_slot,':player',6025,':own_wounded'),
-        (player_set_slot,':player',6026,':enemy_killed'),(player_set_slot,':player',6027,':enemy_wounded'),
-        (player_set_slot,':player',6028,':result'),
-        (multiplayer_send_4_int_to_player,':player',multiplayer_event_multiplayer_campaign_server_events,75,':own_killed',':own_wounded',':enemy_killed'),
-        (multiplayer_send_3_int_to_player,':player',multiplayer_event_multiplayer_campaign_server_events,76,':enemy_wounded',':result'),
-    ])
     replace_script(scripts,'coop_retained_confirm_retreat',[
         (try_begin),(eq,'$g_retained_retreat_question',0),
             (assign,'$g_retained_retreat_question',1),
@@ -86,8 +63,10 @@ def install_scripts(scripts):
         (player_set_slot,':player',6000,0),(player_set_slot,':player',6001,0),
         (player_set_slot,':player',6004,0),(player_set_slot,':player',6006,0),
         (player_set_slot,':player',ROSTER_SPAWNED,0),(player_set_slot,':player',CONFIRMED,0),
+        (player_set_slot,':player',player_context.POST_BATTLE_SLOT,0),
         (multiplayer_send_3_int_to_player,':player',multiplayer_event_multiplayer_campaign_server_events,
             67,'$g_retained_scene','mt_native_session_probe'),
+        (call_script,'script_coop_ctx_before_battle',':player',':team'),
     ])
     replace_script(scripts,'coop_retained_start',[
         (store_script_param,':requester',1),(store_script_param,':target',2),(store_script_param,':siege',3),
@@ -329,9 +308,7 @@ def install_scripts(scripts):
             # Keep the existing dispatch try nesting intact: prefix a separate
             # handler, then prevent event 50 from entering legacy dispatch.
             out=[(store_script_param,':player_no',1),(store_script_param,':event_type',2),
-                (try_begin),(eq,':event_type',player_context.EV_MENU_CHOOSE),(store_script_param,':native_option',3),
-                    (call_script,'script_coop_menu_choose',':player_no',':native_option'),(try_end),
-                (neq,':event_type',player_context.EV_MENU_CHOOSE),
+                ]+player_context.host_client_events()+[
                 (try_begin),(eq,':event_type',50),(store_script_param,':join_side',3),
                 (call_script,'script_coop_retained_reinforce',':player_no',':join_side'),
                 (eq,reg0,0),(multiplayer_send_int_to_player,':player_no',multiplayer_event_multiplayer_campaign_server_events,88),
@@ -357,72 +334,30 @@ def install_scripts(scripts):
                 (multiplayer_send_4_int_to_player,':recipient',multiplayer_event_multiplayer_campaign_server_events,72,':troop',':size',':wounds'),
                 (try_end),(try_end),
                 (call_script,'script_coop_send_char_sync_to_client',':recipient'),
-                (call_script,'script_coop_send_party_upgradeable_to_client',':recipient')]
-            ops[1:1]=[
-                (try_begin),(player_slot_eq,':recipient',PARTICIPANT,1),(eq,'$g_cycle_result_sent',1),
-                    (player_get_slot,':k',':recipient',6024),(player_get_slot,':w',':recipient',6025),
-                    (player_get_slot,':ek',':recipient',6026),(player_get_slot,':ew',':recipient',6027),
-                    (player_get_slot,':result',':recipient',6028),
-                    (player_get_slot,':loot',':recipient',6021),(player_get_slot,':prisoners',':recipient',6022),
-                    (call_script,'script_coop_retained_send_spoils',':recipient'),
-                    (multiplayer_send_4_int_to_player,':recipient',multiplayer_event_multiplayer_campaign_server_events,75,':k',':w',':ek'),
-                    (multiplayer_send_3_int_to_player,':recipient',multiplayer_event_multiplayer_campaign_server_events,78,':loot',':prisoners'),
-                    (multiplayer_send_3_int_to_player,':recipient',multiplayer_event_multiplayer_campaign_server_events,76,':ew',':result'),
-                (try_end),
-            ]
+                (call_script,'script_coop_send_party_upgradeable_to_client',':recipient'),
+                # Back on the map: Native's debrief, then victory, defeat or retreat.
+                (call_script,'script_coop_ctx_post_battle',':recipient')]
         if name=='multiplayer_campaign_server_events':
             ops[:]=[op for op in ops if not(isinstance(op,tuple) and op[0]==ge and op[1]=='$g_cycle_roster_party')]
             ops[:]=[(store_script_param,':retained_event',1),
-                (try_begin),(eq,':retained_event',75),
-                    (store_script_param,':k',2),(store_script_param,':w',3),(store_script_param,':ek',4),
-                    (multiplayer_get_my_player,':me'),(player_set_slot,':me',6024,':k'),
-                    (player_set_slot,':me',6025,':w'),(player_set_slot,':me',6026,':ek'),
-                (else_try),(eq,':retained_event',76),
-                    (store_script_param,':ew',2),(store_script_param,':result',3),
-                    (multiplayer_get_my_player,':me'),(player_set_slot,':me',6027,':ew'),(player_set_slot,':me',6028,':result'),
-                    # Results arrive in the scene and again after the return;
-                    # the map trigger opens the debrief once per battle.
-                    (try_begin),(eq,'$g_retained_debrief_done',0),(assign,'$g_retained_debrief_pending',1),(try_end),
-                (else_try),(eq,':retained_event',78),
-                    (store_script_param,':loot',2),(store_script_param,':prisoners',3),
-                    (multiplayer_get_my_player,':me'),(player_set_slot,':me',6021,':loot'),(player_set_slot,':me',6022,':prisoners'),
-                (else_try),(eq,':retained_event',83),
+                (try_begin),(eq,':retained_event',83),
                     (store_script_param,':agent',2),(store_script_param,':team',3),(store_script_param,':group',4),
                     (ge,':agent',0),(is_between,':team',0,2),(agent_is_active,':agent'),
                     (agent_set_team,':agent',':team'),(agent_set_group,':agent',':group'),
                     (agent_set_slot,':agent',6199,1),
                 (else_try),(eq,':retained_event',79),
                     (store_script_param,':gone',2),(gt,':gone',0),(party_is_active,':gone'),(disable_party,':gone'),
-                (else_try),(eq,':retained_event',84),
-                    (store_script_param,':slot',2),(store_script_param,':item',3),(store_script_param,':imod',4),
-                    (try_begin),(eq,':slot',-1),(troop_clear_inventory,'trp_household_possessions'),
-                    (else_try),(troop_set_inventory_slot,'trp_household_possessions',':slot',':item'),
-                        (troop_set_inventory_slot_modifier,'trp_household_possessions',':slot',':imod'),(try_end),
                 (else_try),(eq,':retained_event',85),
                     (store_script_param,':menu',2),(call_script,'script_coop_client_request_menu',':menu'),
-                (else_try),(eq,':retained_event',86),
-                    (store_script_param,':index',2),(store_script_param,':troop',3),(store_script_param,':count',4),
-                    (multiplayer_get_my_player,':me'),
-                    (try_begin),(eq,':index',-1),(player_set_slot,':me',6023,0),
-                    (else_try),(is_between,':index',0,16),
-                        (store_mul,':slot',':index',2),(val_add,':slot',19100),
-                        (player_set_slot,':me',':slot',':troop'),(val_add,':slot',1),(player_set_slot,':me',':slot',':count'),
-                        (store_add,':stacks',':index',1),(player_set_slot,':me',6023,':stacks'),(try_end),
                 (else_try),(eq,':retained_event',87),
                     (store_script_param,'$g_retained_join_attacker',2),(store_script_param,'$g_retained_join_defender',3),
                     (call_script,'script_coop_client_request_menu','mnu_coop_retained_join'),
                 (else_try),(eq,':retained_event',88),
                     (display_message,'@You cannot join that side of the battle: you are hostile to it, too far away, or the fight has ended.',0xFFFF4444),
-                (else_try),(eq,':retained_event',89),
-                    (store_script_param,reg1,2),(store_script_param,reg2,3),
-                    (display_message,'@Your party gained {reg1} experience and you received {reg2} denars.',0x00a4d9a2),
                 ]+player_context.client_server_events()+[
                 (try_end)]+[(neq,':retained_event',event) for event in player_context.CLIENT_EVENT_IDS]+[
-                (neq,':retained_event',75),(neq,':retained_event',76),
-                (neq,':retained_event',78),
-                (neq,':retained_event',79),(neq,':retained_event',83),(neq,':retained_event',84),(neq,':retained_event',85),
-                (neq,':retained_event',86),(neq,':retained_event',87),(neq,':retained_event',88),
-                (neq,':retained_event',89),
+                (neq,':retained_event',79),(neq,':retained_event',83),(neq,':retained_event',85),
+                (neq,':retained_event',87),(neq,':retained_event',88),
                 (try_begin),(eq,':retained_event',73),
                     (store_script_param,':map_party',2),(store_script_param,':x',3),(store_script_param,':y',4),
                     (gt,':map_party',0),(set_fixed_point_multiplier,1000),
@@ -433,8 +368,6 @@ def install_scripts(scripts):
                     (enable_party,':map_party'),(party_set_slot,':map_party',slot_party_coop_battle_slot,':fighting'),
                     (try_begin),(eq,':fighting',0),(party_leave_cur_battle,':map_party'),(try_end),
                 (try_end),(neq,':retained_event',73),(neq,':retained_event',74)]+ops
-    from module_retained_rewards import install
-    install(scripts)
 
 def install_triggers(triggers):
     # Remove the old global invite: admission belongs to coop_retained_start.
@@ -476,16 +409,7 @@ def install_triggers(triggers):
                 '$g_cycle_attacker_party','$g_cycle_defender_party'),
         (try_end),
     ]))
-    triggers.append((0,[(neg|multiplayer_is_server),(multiplayer_is_campaign),
-        (eq,'$g_retained_prisoner_open',1),(assign,'$g_retained_prisoner_open',0),
-        (call_script,'script_coop_retained_prisoner_diff'),
-    ]))
-    triggers.append((0,[(neg|multiplayer_is_server),(multiplayer_is_campaign),
-        (eq,'$g_full_probe_remote_request',0),(eq,'$g_cycle_map_restore',0),
-        (eq,'$g_retained_debrief_pending',1),(assign,'$g_retained_debrief_pending',0),
-        (assign,'$g_retained_debrief_done',1),
-        (call_script,'script_coop_client_request_menu','mnu_coop_retained_debrief'),
-    ]))
+    triggers += player_context.client_triggers()
 
 def install_menus(menus):
     menus.append(('coop_retained_join',0,'{s10}','none',[
@@ -510,17 +434,6 @@ def install_menus(menus):
                 (jump_to_menu,'mnu_coop_retained_join')]))
         if menu[0]=='multiplayer_campaign_encounter':
             menu[5][:]=[option for option in menu[5] if option[0]!='encounter_fight_sp']
-    menus.append(('coop_retained_debrief',0,
-        '{s11}^^Your Casualties:^^{reg1} killed, {reg2} wounded.^^Enemy Casualties:^^{reg3} killed, {reg4} wounded.',
-        'none',[
-            (multiplayer_get_my_player,':me'),(player_get_slot,reg1,':me',6024),(player_get_slot,reg2,':me',6025),
-            (player_get_slot,reg3,':me',6026),(player_get_slot,reg4,':me',6027),(player_get_slot,':result',':me',6028),
-            (try_begin),(eq,':result',1),(str_store_string,s11,'@You were victorious!'),
-            (else_try),(eq,':result',0),(str_store_string,s11,'@You have retreated from the fight.'),
-            (else_try),(str_store_string,s11,'@Your forces were defeated.'),(try_end),
-        ],[('continue',[],'Continue...',[(change_screen_map)])]))
-    from module_retained_rewards import menus as reward_menus
-    reward_menus(menus)
 
 def install_presentations(presentations):
     # Troop banners come from Native's label banner (common_battle_init_banner),
@@ -624,8 +537,7 @@ def install_missions(missions):
                 (store_trigger_param_1,':dead'),(store_trigger_param_2,':killer'),
                 (call_script,'script_coop_retained_kill_xp',':dead',':killer'),
             ]),
-            (ti_after_mission_start,0,0,[(neg|multiplayer_is_server)],[(assign,'$g_retained_retreat_question',0),(assign,'$g_multiplayer_allow_player_banners',0),
-                (assign,'$g_retained_debrief_done',0),(assign,'$g_retained_debrief_pending',0)]),
+            (ti_after_mission_start,0,0,[(neg|multiplayer_is_server)],[(assign,'$g_retained_retreat_question',0),(assign,'$g_multiplayer_allow_player_banners',0)]),
             (ti_question_answered,0,0,[(neg|multiplayer_is_server)],[
                 (store_trigger_param_1,':answer'),(eq,'$g_retained_retreat_question',1),
                 (assign,'$g_retained_retreat_question',0),
@@ -712,14 +624,16 @@ def install_missions(missions):
                 (else_try),(eq,':side0',0),(assign,':winner',1),(try_end),
                 (try_begin),(gt,'$g_cycle_retreat_requested',0),
                     (store_sub,':retreat_team','$g_cycle_retreat_requested',1),(store_sub,':winner',1,':retreat_team'),(try_end),
+                # Native's casualty parties per player, before losses leave the armies.
+                (assign,':human_winner',0),
                 (try_for_players,':recipient',1),(player_is_active,':recipient'),(player_slot_eq,':recipient',PARTICIPANT,1),
-                    (call_script,'script_coop_retained_send_results',':recipient',':winner'),(try_end),
-                (call_script,'script_coop_retained_battle_xp',':winner'),
-                (call_script,'script_coop_retained_prepare_rewards',':winner'),
-                (try_for_players,':recipient',1),(player_is_active,':recipient'),(player_slot_eq,':recipient',PARTICIPANT,1),
-                    (call_script,'script_coop_retained_send_spoils',':recipient'),
-                    (player_get_slot,':loot',':recipient',6021),(player_get_slot,':prisoners',':recipient',6022),
-                    (multiplayer_send_3_int_to_player,':recipient',multiplayer_event_multiplayer_campaign_server_events,78,':loot',':prisoners'),(try_end),
+                    (call_script,'script_coop_ctx_after_battle',':recipient',':winner'),
+                    (player_get_team_no,':recipient_team',':recipient'),(eq,':recipient_team',':winner'),
+                    (eq,'$g_cycle_retreat_requested',0),(assign,':human_winner',1),
+                (try_end),
+                (assign,':losing_root',-1),
+                (try_begin),(eq,':winner',0),(assign,':losing_root','$g_cycle_defender_party'),
+                (else_try),(eq,':winner',1),(assign,':losing_root','$g_cycle_attacker_party'),(try_end),
                 (call_script,'script_coop_retained_release_bystanders'),
                 (try_for_agents,':agent'),(agent_is_human,':agent'),(agent_is_alive,':agent'),
                     (agent_get_slot,':troop',':agent',6101),(troop_is_hero,':troop'),
@@ -745,10 +659,20 @@ def install_missions(missions):
                 (try_for_range,':index',0,'$g_retained_party_count'),
                     (store_add,':slot',COHORT_BASE,':index'),(party_get_slot,':party','$g_cycle_attacker_party',':slot'),
                     (party_get_slot,':team',':party',6015),
-                    (try_begin),(ge,':winner',0),(neq,':team',':winner'),(eq,'$g_cycle_retreat_requested',0),
-                        (call_script,'script_coop_retained_defeated_ai',':party'),
+                    (try_begin),(eq,':human_winner',1),(eq,':party',':losing_root'),
+                        # Native total victory loots, takes prisoners, then clears it.
+                        (party_is_non_player,':party'),(neg|is_between,':party',centers_begin,centers_end),
+                        (disable_party,':party'),
+                        (try_for_players,':recipient',1),(player_is_active,':recipient'),
+                            (player_slot_eq,':recipient',slot_player_coop_char_state,coop_char_state_ready),
+                            (multiplayer_send_2_int_to_player,':recipient',multiplayer_event_multiplayer_campaign_server_events,79,':party'),
+                        (try_end),
+                    (else_try),
+                        (try_begin),(ge,':winner',0),(neq,':team',':winner'),(eq,'$g_cycle_retreat_requested',0),
+                            (call_script,'script_coop_retained_defeated_ai',':party'),
+                        (try_end),
+                        (call_script,'script_coop_retained_resume_ai',':party'),
                     (try_end),
-                    (call_script,'script_coop_retained_resume_ai',':party'),
                 (try_end),
                 (try_begin),(eq,'$g_retained_siege',1),(eq,':side1',0),(eq,'$g_cycle_retreat_requested',0),
                     (call_script,'script_coop_siege_capture_consequences','$g_cycle_attacker','$g_cycle_defender_party'),(try_end),

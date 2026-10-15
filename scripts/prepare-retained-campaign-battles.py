@@ -4,7 +4,7 @@ import os, shutil, subprocess
 root=Path(__file__).resolve().parents[1]
 source=root/'runtime/NativeMissionProbe/Source'
 shutil.copy2(root/'scripts/module_retained_campaign_battles.py',source/'module_retained_campaign_battles.py')
-shutil.copy2(root/'scripts/module_retained_rewards.py',source/'module_retained_rewards.py')
+shutil.copy2(root/'scripts/module_player_context.py',source/'module_player_context.py')
 for filename,function,collection in [('module_coop_scripts.py','install_scripts','coop_scripts'),
                                     ('module_mission_templates.py','install_missions','mission_templates'),
                                     ('module_simple_triggers.py','install_triggers','simple_triggers'),

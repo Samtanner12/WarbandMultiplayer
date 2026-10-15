@@ -1640,3 +1640,5 @@ g_ctx_menu_next
 g_mirror_dict
 g_mirror_dict_ready
 $g_coop_legacy_encounter_menu
+g_ctx_screen_open
+g_ctx_menu_screen
