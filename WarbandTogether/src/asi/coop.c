@@ -664,6 +664,22 @@ __declspec(naked) static void message_mesh_guard(void) {
     }
 }
 
+/* rglEntity::renderShadows draws the entity's shadow mesh (+0x280) without a
+   check; it is only built once the entity's shadow timer has run, so a map
+   entity rendered on its first frames can still have none. */
+static DWORD g_shadow_guard_resume = 0x62366D;
+static DWORD g_shadow_guard_skip = 0x623678;   /* after the render call */
+__declspec(naked) static void shadow_mesh_guard(void) {
+    __asm {
+        mov  ecx, dword ptr [edi+0x280]
+        test ecx, ecx
+        jz   skip_shadow
+        jmp  dword ptr [g_shadow_guard_resume]
+    skip_shadow:
+        jmp  dword ptr [g_shadow_guard_skip]
+    }
+}
+
 /* Replays mbLoadSaveWindow::frameMove's Load button (0x4E2D58-0x4E2DE9). */
 static void dev_load_savegame(int slot) {
     BYTE path[0x80];
@@ -1548,6 +1564,20 @@ BOOL APIENTRY DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
                 coop_log("renderMessages null text-mesh guard installed at 0x693F87\n");
             } else {
                 coop_log("renderMessages guard skipped: unexpected bytes at 0x693F87\n");
+            }
+        }
+        {
+            DWORD old_prot;
+            BYTE *addr = (BYTE *)0x623667;   /* mov ecx,[edi+280h] */
+            if (memcmp(addr, "\x8B\x8F\x80\x02\x00\x00", 6) == 0 &&
+                VirtualProtect(addr, 6, PAGE_EXECUTE_READWRITE, &old_prot)) {
+                addr[0] = 0xE9;
+                *(DWORD *)(addr + 1) = (DWORD)shadow_mesh_guard - (DWORD)(addr + 5);
+                addr[5] = 0x90;
+                VirtualProtect(addr, 6, old_prot, &old_prot);
+                coop_log("renderShadows null shadow-mesh guard installed at 0x623667\n");
+            } else {
+                coop_log("renderShadows guard skipped: unexpected bytes at 0x623667\n");
             }
         }
 
