@@ -724,7 +724,11 @@ def client_server_events():
         (else_try), (eq, ':retained_event', EV_MENU_SHOW),
             (call_script, 'script_coop_client_request_menu', 'mnu_coop_menu_mirror'),
         (else_try), (eq, ':retained_event', EV_MENU_CLOSE),
-            (assign, '$g_mirror_count', 0), (call_script, 'script_coop_client_request_menu', 'mnu_coop_menu_mirror_close'),
+            # The client is already on the map (it leaves the mirror after each
+            # answer). Only cancel a mirror still waiting to open: leaving a screen
+            # here would end a battle the host is starting.
+            (assign, '$g_mirror_count', 0),
+            (try_begin), (eq, '$g_coop_pending_menu', 'mnu_coop_menu_mirror'), (assign, '$g_coop_pending_menu_armed', 0), (try_end),
         (else_try), (eq, ':retained_event', EV_MENU_MESSAGE), (assign, '$g_mirror_expect', 2),
         (else_try), (eq, ':retained_event', EV_LOOT_SLOT),
             (store_script_param, ':slot', 2), (store_script_param, ':item', 3), (store_script_param, ':imod', 4),
