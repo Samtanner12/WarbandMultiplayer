@@ -96,6 +96,15 @@ class Conversations(unittest.TestCase):
         for sid in states:self.assertIn('coop_dlg_%d'%sid,built)
         self.assertTrue(mentions(built['coop_menu_show_simple_encounter'],'script_coop_ctx_party_meeting'))
         self.assertTrue(mentions(built['coop_menu_present'],'script_coop_dlg_advance'))
+    def test_client_leaves_the_mirror_after_answering(self):
+        # Menus open only from the map, so a menu left open would show stale answers.
+        for option in menus['coop_menu_mirror'][5]:
+            self.assertTrue(any(op==change_screen_return or (isinstance(op,tuple) and op[0]==change_screen_return) for op in option[3]))
+    def test_partner_can_speak_again_without_answers(self):
+        self.assertTrue(mentions(built['coop_dlg_choose'],ctx.DLG_CONTINUE))
+        self.assertTrue(mentions(built['coop_dlg_advance'],ctx.DLG_CONTINUE))
+    def test_unsupported_options_are_hidden(self):
+        self.assertFalse(any('encounter order attack' in repr(op) for op in built['coop_menu_choose_simple_encounter']))
     def test_answers_go_to_the_conversation_first(self):
         self.assertTrue(mentions(built['coop_menu_choose'],'script_coop_dlg_choose'))
     def test_looters_line_uses_the_encountered_template(self):

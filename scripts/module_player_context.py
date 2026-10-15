@@ -32,6 +32,8 @@ COMPANION_SNAPSHOT_BASE = 19260   # client: companions of offered troops before 
 ACCOUNT_SLOT, OFFER_COUNT_SLOT, COMPANION_COUNT_SLOT = 6029, 6023, 6031
 LOOT_TROOP, LOOT_SLOTS = 'trp_household_possessions', 96
 MAX_OPTIONS = 12
+# Native options whose menus the host cannot run yet (auto-resolve needs the engine's simulate_battle).
+UNSUPPORTED_OPTIONS = set(['encounter_order_attack'])
 SERVER = multiplayer_event_multiplayer_campaign_server_events
 CLIENT = multiplayer_event_multiplayer_campaign_client_events
 # Network message types are 7 bits (0-127) and all are taken. Menu strings reuse
@@ -302,6 +304,7 @@ def show_script(menu):
            (eq, '$g_ctx_menu_screen', 0), (eq, '$g_ctx_dialog', 0),
            (multiplayer_send_3_int_to_player, ':player', SERVER, EV_MENU_BEGIN, '$g_ctx_menu_mesh', 0)] + send_string(menu[2])
     for index, option in enumerate(menu[5][:MAX_OPTIONS]):
+        if option[0] in UNSUPPORTED_OPTIONS: continue
         ops += [(try_begin)] + translated(option[1]) + [
             (multiplayer_send_3_int_to_player, ':player', SERVER, EV_MENU_OPTION, index, 0)] + send_string(option[2]) + [(try_end)]
     return ops + [(multiplayer_send_2_int_to_player, ':player', SERVER, EV_MENU_SHOW, 'mnu_' + menu[0]), (try_end)]
@@ -311,6 +314,7 @@ def choose_script(menu):
     ops = [(store_script_param, ':player', 1), (store_script_param, ':option', 2),
            (assign, '$g_ctx_menu_close', 0), (assign, '$g_ctx_menu_battle', 0), (assign, '$g_ctx_menu_screen', 0)]
     for index, option in enumerate(menu[5][:MAX_OPTIONS]):
+        if option[0] in UNSUPPORTED_OPTIONS: continue
         ops += [(try_begin), (eq, ':option', index)] + debug('%s: checking "%s"' % (menu[0], option[0])) + translated(option[1]) + [
             (assign, reg55, 0), (try_begin)] + translated(option[3]) + [(assign, reg55, 1), (try_end),
             (assign, reg58, '$g_ctx_menu_battle'), (assign, reg59, '$g_ctx_menu_close'), (assign, reg60, '$g_ctx_menu_next')
@@ -773,6 +777,7 @@ def host_client_events():
 # encountered party of the player's context, not the engine's dialog screen.
 from header_dialogs import anyone, plyr, party_tpl, auto_proceed
 DLG_CLOSE = -1
+DLG_CONTINUE = -2   # answer row: the partner's next line in the same state
 DLG_START = 0
 CONV_DROPPED_OPS = set(globals()[n] for n in ['talk_info_show', 'talk_info_set_relation_bar', 'talk_info_set_line',
     'set_conversation_speaker_troop', 'set_conversation_speaker_agent', 'play_sound', 'agent_play_sound',
@@ -904,7 +909,9 @@ def dialog_scripts(entries):
                         (call_script, 'script_coop_dlg_state', 1, ':state', 0), (assign, ':rows', reg0),
                     (try_end),
                     (try_begin), (le, ':rows', 0),
-                        (player_set_slot, ':player', DLG_ENTRY_BASE, -1),
+                        # No answers: the partner speaks on (Native's click to continue), or it ends.
+                        (try_begin), (eq, ':state', DLG_CLOSE), (player_set_slot, ':player', DLG_ENTRY_BASE, -1),
+                        (else_try), (player_set_slot, ':player', DLG_ENTRY_BASE, DLG_CONTINUE), (try_end),
                         (multiplayer_send_3_int_to_player, ':player', SERVER, EV_MENU_OPTION, 0, 0),
                         (str_store_string, s49, '@Continue...'),
                         (multiplayer_send_string_to_player, ':player', EV_MENU_STRING, s49),
@@ -928,6 +935,7 @@ def dialog_scripts(entries):
             (store_add, ':slot', DLG_ENTRY_BASE, ':row'), (player_get_slot, ':entry', ':player', ':slot'),
             (store_add, ':slot', DLG_REPEAT_BASE, ':row'), (player_get_slot, '$g_ctx_repeat_object', ':player', ':slot'),
         (try_end),
+        (try_begin), (eq, ':entry', DLG_CONTINUE), (player_get_slot, ':next', ':player', DLG_STATE_SLOT), (try_end),
         (try_begin), (ge, ':entry', 0),
             (player_get_slot, ':state', ':player', DLG_STATE_SLOT),
             (call_script, 'script_coop_dlg_state', 2, ':state', ':entry'), (assign, ':next', reg1),
@@ -950,7 +958,11 @@ def dialog_scripts(entries):
             (else_try), (add_xp_as_reward, ':xp'), (try_end)])]
 
 def install_menus(menus):
-    load = [(try_begin), (eq, '$g_ctx_screen_open', 0), (else_try), (call_script, 'script_coop_ctx_client_screen_settle'), (try_end),
+    # The client opens a requested menu only from the map (a map trigger), so a
+    # menu left open would never show the host's next step: leave to the map
+    # after every answer and after a Native screen closes.
+    load = [(try_begin), (eq, '$g_ctx_screen_open', 0), (else_try), (call_script, 'script_coop_ctx_client_screen_settle'),
+                (change_screen_return), (try_end),
             (try_begin), (eq, '$g_mirror_dict_ready', 1), (dict_get_str, s50, '$g_mirror_dict', '@mtext')]
     for row in range(MAX_OPTIONS):
         load += [(assign, reg5, row), (dict_get_str, s51 + row, '$g_mirror_dict', '@mo{reg5}')]
@@ -960,7 +972,8 @@ def install_menus(menus):
         options.append(('mirror_%d' % row, [(gt, '$g_mirror_count', row)], '{s%d}' % (51 + row), [
             (multiplayer_get_my_player, ':me'), (player_get_slot, ':native_option', ':me', OPTION_MAP_BASE + row),
             (assign, '$g_mirror_count', 0),
-            (multiplayer_send_2_int_to_server, CLIENT, EV_MENU_CHOOSE, ':native_option')]))
+            (multiplayer_send_2_int_to_server, CLIENT, EV_MENU_CHOOSE, ':native_option'),
+            (change_screen_return)]))
     menus += [('coop_menu_mirror', mnf_scale_picture, '{s50}', 'none', load, options),
               ('coop_menu_mirror_close', 0, ' ', 'none', [(change_screen_return)], [])]
 
