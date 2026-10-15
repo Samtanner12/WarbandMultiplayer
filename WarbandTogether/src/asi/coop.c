@@ -571,10 +571,21 @@ static void __cdecl browser_framemove_pre(void *this_ptr) {
 
 __declspec(naked) void browser_framemove_detour(void) {
     __asm {
+        /* The engine passes floats in XMM registers; C code may clobber them. */
         push ecx
+        sub  esp, 64
+        movdqu [esp], xmm0
+        movdqu [esp+16], xmm1
+        movdqu [esp+32], xmm2
+        movdqu [esp+48], xmm3
         push ecx
         call browser_framemove_pre
         add  esp, 4
+        movdqu xmm0, [esp]
+        movdqu xmm1, [esp+16]
+        movdqu xmm2, [esp+32]
+        movdqu xmm3, [esp+48]
+        add  esp, 64
         pop  ecx
         jmp  [g_fm_trampoline]
     }
@@ -771,6 +782,17 @@ static void __cdecl autojoin_framemove_pre(void) {
     static DWORD s_arm_tick = 0;
     static int   s_navs = 0;
     hitch_probe();
+    {   /* Diagnostic: the world's date clock right after a load, before any server code. */
+        static void *logged_game = NULL;
+        char *game = *(char **)ADDR_CUR_GAME;
+        if (game && game != logged_game && *(int *)ADDR_MAP_INTERACTION_MODE == 0) {
+            int idx = *(int *)(game + 0x13E90);
+            logged_game = game;
+            if (idx >= 0 && idx <= 2)
+                coop_log("[clock-diag] loaded game: idx=%d timer=%lld origin=%lld\n", idx,
+                         *(__int64 *)(0xA4F600 + idx * 8), *(__int64 *)(game + 0x13E98));
+        }
+    }
     apply_campaign_clock();
     pump_retained_campaign_result();
     full_host_probe_pump();
@@ -885,7 +907,17 @@ static void __cdecl autojoin_framemove_pre(void) {
 __declspec(naked) void autojoin_framemove_detour(void) {
     __asm {
         push ecx
+        sub  esp, 64
+        movdqu [esp], xmm0
+        movdqu [esp+16], xmm1
+        movdqu [esp+32], xmm2
+        movdqu [esp+48], xmm3
         call autojoin_framemove_pre
+        movdqu xmm0, [esp]
+        movdqu xmm1, [esp+16]
+        movdqu xmm2, [esp+32]
+        movdqu xmm3, [esp+48]
+        add  esp, 64
         pop  ecx
         jmp  [g_aj_trampoline]
     }
@@ -933,9 +965,19 @@ __declspec(naked) void create_agent_detour(void) {
         /* Pass pointer to arg area. At this point ESP points at saved edx;
            above that: saved ecx, return addr, then param2 (transform) at +12. */
         lea  eax, [esp + 12]
+        sub  esp, 64
+        movdqu [esp], xmm0
+        movdqu [esp+16], xmm1
+        movdqu [esp+32], xmm2
+        movdqu [esp+48], xmm3
         push eax
         call create_agent_pre
         add  esp, 4
+        movdqu xmm0, [esp]
+        movdqu xmm1, [esp+16]
+        movdqu xmm2, [esp+32]
+        movdqu xmm3, [esp+48]
+        add  esp, 64
         pop  edx
         pop  ecx
         jmp  [g_ca_trampoline]
@@ -1058,7 +1100,17 @@ __declspec(naked) void setparams_prologue_detour(void) {
         push eax
         push ecx
         push edx
+        sub  esp, 64
+        movdqu [esp], xmm0
+        movdqu [esp+16], xmm1
+        movdqu [esp+32], xmm2
+        movdqu [esp+48], xmm3
         call setparams_pre
+        movdqu xmm0, [esp]
+        movdqu xmm1, [esp+16]
+        movdqu xmm2, [esp+32]
+        movdqu xmm3, [esp+48]
+        add  esp, 64
         pop  edx
         pop  ecx
         pop  eax
@@ -1128,7 +1180,17 @@ __declspec(naked) void mission_framemove_detour(void) {
         push eax
         push ecx
         push edx
+        sub  esp, 64
+        movdqu [esp], xmm0
+        movdqu [esp+16], xmm1
+        movdqu [esp+32], xmm2
+        movdqu [esp+48], xmm3
         call mfm_pre
+        movdqu xmm0, [esp]
+        movdqu xmm1, [esp+16]
+        movdqu xmm2, [esp+32]
+        movdqu xmm3, [esp+48]
+        add  esp, 64
         pop  edx
         pop  ecx
         pop  eax

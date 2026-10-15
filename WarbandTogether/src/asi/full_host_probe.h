@@ -588,7 +588,12 @@ static void full_host_probe_world_pump(void) {
     timer = *(int *)(game + 0x13E90);
     if (timer < 0 || timer > 2 || g_clock_sequence_idx < 0) return;
     elapsed = *(__int64 *)(0xA4F600 + timer*8) - *(__int64 *)(game + 0x13E98);
-    if (elapsed < 0) return;
+    if (elapsed < 0) {
+        static int warned = 0;
+        if (!warned++) coop_log("[clock] world date before its origin (timer %d = %lld, origin %lld)\n",
+                                timer, *(__int64 *)(0xA4F600 + timer*8), *(__int64 *)(game + 0x13E98));
+        return;
+    }
     modglobals_set(g_clock_hours_idx, elapsed / 100000);
     modglobals_set(g_clock_fraction_idx, (elapsed % 100000) / 100);
     modglobals_set(g_clock_sequence_idx, modglobals_get_int(g_clock_sequence_idx, 0) + 1);
