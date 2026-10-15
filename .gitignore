@@ -1,0 +1,24 @@
+# Staged game copies: Warband/WSE2 files are not redistributable. Only the
+# NativeCoopProbe module source is tracked.
+/runtime/*
+!/runtime/NativeMissionProbe/
+/runtime/NativeMissionProbe/*
+!/runtime/NativeMissionProbe/Source/
+
+# Toolchain, downloads, build outputs and logs (recreated by the scripts)
+/tools/
+/downloads/
+/build/
+/logs/
+
+# Upstream WarbandTogether history, kept locally only
+/WarbandTogether/.git-upstream/
+
+# Saves, character data, crash dumps
+*.sav
+*.wsedict
+*.dmp
+
+# Python bytecode
+*.pyc
+__pycache__/
