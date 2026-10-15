@@ -4,7 +4,6 @@ from header_common import *
 from header_operations import *
 from header_triggers import *
 from header_mission_templates import *
-from header_presentations import prsntf_read_only
 from module_constants import *
 
 PARTICIPANT=6015
@@ -480,71 +479,10 @@ def install_menus(menus):
     from module_retained_rewards import menus as reward_menus
     reward_menus(menus)
 
-def friendly_banners():
-    # Native-style label banner above every friendly soldier, in its owner's
-    # heraldry. One plain mesh overlay per labelled agent, created on demand;
-    # agent slot 6197 holds the presentation generation, 6198 the overlay+1.
-    size,on_foot,mounted=50,2100,2900
-    return ('coop_friendly_overhead',prsntf_read_only,0,[
-        (ti_on_presentation_load,[
-            (presentation_set_duration,999999),
-            (val_add,'$g_retained_banner_generation',1),(assign,'$g_retained_banner_count',0),
-        ]),
-        (ti_on_presentation_run,[
-            (set_fixed_point_multiplier,1000),
-            (multiplayer_get_my_player,':player'),
-            (try_begin),(this_or_next|lt,':player',0),(ge,'$g_full_probe_remote_request',5),
-                (presentation_set_duration,0),
-            (else_try),
-                (player_get_agent_id,':controlled',':player'),
-                (player_get_team_no,':team',':player'),
-                (try_begin),(ge,':controlled',0),(agent_get_team,':team',':controlled'),(try_end),
-                (try_for_agents,':agent'),
-                    (agent_slot_eq,':agent',6197,'$g_retained_banner_generation'),
-                    (agent_get_slot,':overlay',':agent',6198),(val_sub,':overlay',1),
-                    (overlay_set_alpha,':overlay',0),
-                (try_end),
-                (mission_cam_get_position,pos20),
-                (try_for_agents,':agent'),
-                    (agent_is_human,':agent'),(agent_is_alive,':agent'),(neq,':agent',':controlled'),
-                    (agent_get_team,':agent_team',':agent'),(eq,':agent_team',':team'),
-                    (agent_get_position,pos21,':agent'),
-                    (get_distance_between_positions,':distance',pos20,pos21),(le,':distance',100000),
-                    (assign,':height',on_foot),
-                    (try_begin),(agent_get_horse,':horse',':agent'),(ge,':horse',0),(assign,':height',mounted),(try_end),
-                    (position_move_z,pos21,':height'),
-                    (neg|position_is_behind_position,pos20,pos21),
-                    (position_get_screen_projection,pos22,pos21),
-                    (position_get_x,':x',pos22),(position_get_y,':y',pos22),
-                    (is_between,':x',0,1000),(is_between,':y',0,750),
-                    (try_begin),(neg|agent_slot_eq,':agent',6197,'$g_retained_banner_generation'),
-                        (lt,'$g_retained_banner_count',400),
-                        (assign,':mesh','mesh_arms_a01'),
-                        (agent_get_group,':owner',':agent'),
-                        (try_begin),(ge,':owner',1),(player_is_active,':owner'),
-                            (player_get_banner_id,':banner',':owner'),(ge,':banner',0),
-                            (store_add,':candidate',':banner',arms_meshes_begin),
-                            (is_between,':candidate',arms_meshes_begin,arms_meshes_end_minus_one),
-                            (assign,':mesh',':candidate'),
-                        (try_end),
-                        (create_mesh_overlay,':created',':mesh'),
-                        (init_position,pos19),(position_set_x,pos19,size),(position_set_y,pos19,size),
-                        (overlay_set_size,':created',pos19),(overlay_set_alpha,':created',0),
-                        (val_add,':created',1),(agent_set_slot,':agent',6198,':created'),
-                        (agent_set_slot,':agent',6197,'$g_retained_banner_generation'),
-                        (val_add,'$g_retained_banner_count',1),
-                    (try_end),
-                    (agent_slot_eq,':agent',6197,'$g_retained_banner_generation'),
-                    (agent_get_slot,':overlay',':agent',6198),(val_sub,':overlay',1),
-                    (overlay_set_position,':overlay',pos22),(overlay_set_alpha,':overlay',220),
-                (try_end),
-            (try_end),
-        ]),
-    ])
-
 def install_presentations(presentations):
-    for index,presentation in enumerate(presentations):
-        if presentation[0]=='coop_friendly_overhead':presentations[index]=friendly_banners()
+    # Troop banners come from Native's label banner (common_battle_init_banner),
+    # not from a presentation overlay.
+    pass
 
 def install_native_scripts(scripts):
     # The map's Camp button starts an encounter with p_camp_bandits; Native
@@ -577,14 +515,24 @@ def install_native_scripts(scripts):
                 (player_get_banner_id,':banner',':owner'),(ge,':banner',0),
                 (store_add,':mesh',':banner',arms_meshes_begin),
                 (is_between,':mesh',arms_meshes_begin,arms_meshes_end_minus_one),(assign,reg0,':mesh'),
+            (else_try),
+                # AI armies carry their faction's banner, as Native multiplayer does.
+                (ge,':retained_agent',0),(agent_is_active,':retained_agent'),
+                (agent_get_team,':team',':retained_agent'),(team_get_faction,':faction',':team'),
+                (gt,':faction',0),(faction_get_slot,':mesh',':faction',slot_faction_banner),(gt,':mesh',0),
+                (assign,reg0,':mesh'),
             (try_end),(else_try)]+ops+[(try_end)]
 
 def install_missions(missions):
     for mission in missions:
         if mission[0]!='native_session_probe':continue
-        kept=[]
+        kept=[];banner_kept=False
         for trigger in mission[5]:
-            if any(isinstance(op,tuple) and op[0]==call_script and op[1]=='script_troop_agent_set_banner' for op in trigger[4]):continue
+            # Native label banners: keep one common_battle_init_banner (listed twice).
+            if any(isinstance(op,tuple) and op[0]==call_script and op[1]=='script_troop_agent_set_banner' for op in trigger[4]):
+                if not banner_kept:kept.append(trigger);banner_kept=True
+                continue
+            if any(isinstance(op,tuple) and op[0]==start_presentation and op[1]=='prsnt_coop_friendly_overhead' for op in trigger[4]):continue
             if trigger[0] in [0,ti_tab_pressed] and any(isinstance(op,tuple) and op[0]==multiplayer_send_int_to_server and op[-1]==46 for op in trigger[4]):
                 if trigger[0]==ti_tab_pressed:
                     kept.append((ti_tab_pressed,0,0,[(neg|multiplayer_is_server)],[(call_script,'script_coop_retained_confirm_retreat')]))
