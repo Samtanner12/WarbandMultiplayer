@@ -2295,11 +2295,12 @@ script_coop_dlg_choose = 2293
 script_coop_ctx_party_meeting = 2294
 script_coop_ctx_troop_meeting = 2295
 script_coop_ctx_partner_quest = 2296
-script_coop_ctx_add_xp = 2297
-script_coop_menu_trace = 2298
-script_coop_menu_mirror_string = 2299
-script_coop_ctx_client_screen_settle = 2300
-script_coop_ctx_client_open_exchange = 2301
-script_coop_ctx_client_exchange_diff = 2302
+script_coop_ctx_party_add_xp = 2297
+script_coop_ctx_add_xp = 2298
+script_coop_menu_trace = 2299
+script_coop_menu_mirror_string = 2300
+script_coop_ctx_client_screen_settle = 2301
+script_coop_ctx_client_open_exchange = 2302
+script_coop_ctx_client_exchange_diff = 2303
 
 

@@ -171,6 +171,8 @@ def closure_op(op):
     op = rewrite_refs(as_op(op))
     if isinstance(op, tuple) and op[0] & ~FLAGS == add_xp_as_reward:
         return (call_script, 'script_coop_ctx_add_xp', op[1])
+    if isinstance(op, tuple) and op[0] == party_add_xp and op[1] == CTX_PARTY:
+        return (call_script, 'script_coop_ctx_party_add_xp', op[2])
     return op
 
 def menu_ops(menu):
@@ -667,7 +669,8 @@ def battle_scripts():
             (player_set_slot, ':player', POST_BATTLE_SLOT, 1),
             (assign, reg56, ':player'), (assign, reg57, '$g_battle_result'), (assign, reg58, '$g_ctx_depth'),
             (party_get_num_companions, reg59, 'p_total_enemy_casualties'), (party_get_num_companions, reg60, 'p_player_casualties'),
-            ] + debug('after battle, player {reg56}: result {reg57}, context depth {reg58}, enemy casualties {reg59}, own casualties {reg60}') + [
+            (troop_get_xp, reg55, CTX_TROOP),
+            ] + debug('after battle, player {reg56}: result {reg57}, context depth {reg58}, enemy casualties {reg59}, own casualties {reg60}, hero xp {reg55}') + [
             (call_script, 'script_coop_ctx_exit', ':player'),
         (try_end)]),
     # Back on the map: Native's debrief, then victory, defeat or retreat.
@@ -791,8 +794,8 @@ def client_server_events():
             (multiplayer_get_my_player, ':me'), (player_get_troop_id, ':hero', ':me'),
             (store_troop_gold, '$g_coop_trade_gold_before', ':hero'),
             (assign, '$g_retained_loot_merchant', LOOT_TROOP),
-            # Opened from the map trigger below, not from the network handler.
-            (assign, '$g_ctx_screen_pending', 1),
+            # Native screens open from a menu and return to it (see mnu_coop_screen_host).
+            (assign, '$g_ctx_screen_pending', 1), (call_script, 'script_coop_client_request_menu', 'mnu_coop_screen_host'),
         (else_try), (eq, ':retained_event', EV_PRISONER_OFFER),
             (store_script_param, ':index', 2), (store_script_param, ':troop', 3), (store_script_param, ':count', 4),
             (multiplayer_get_my_player, ':me'),
@@ -809,7 +812,7 @@ def client_server_events():
             (player_set_slot, ':me', ':slot', ':troop'), (val_add, ':slot', 1), (player_set_slot, ':me', ':slot', ':count'),
             (store_add, ':stacks', ':index', 1), (player_set_slot, ':me', COMPANION_COUNT_SLOT, ':stacks'),
         (else_try), (eq, ':retained_event', EV_OPEN_EXCHANGE),
-            (assign, '$g_ctx_screen_pending', 2)]
+            (assign, '$g_ctx_screen_pending', 2), (call_script, 'script_coop_client_request_menu', 'mnu_coop_screen_host')]
 
 def host_client_events():
     """Host handlers for client events, placed in the client-event prefix."""
@@ -1008,6 +1011,18 @@ def dialog_scripts(entries):
             (try_for_range, ':quest', 0, len(quests)), (check_quest_active, ':quest'),
                 (quest_slot_eq, ':quest', slot_quest_giver_troop, '$g_ctx_talk_troop'), (assign, ':found', ':quest'),
             (try_end), (assign, reg0, ':found')]),
+        # Native's victory experience for the player's army; the engine reports
+        # it only for the single-player party, so tell the player here.
+        ('coop_ctx_party_add_xp', [(store_script_param, ':xp', 1),
+            (try_begin), (gt, CTX_PLAYER, 0),
+                (troop_get_xp, ':before', CTX_TROOP), (party_add_xp, CTX_PARTY, ':xp'), (troop_get_xp, ':after', CTX_TROOP),
+                (assign, reg0, ':xp'), (str_store_string, s49, '@Your party gained {reg0} experience.'),
+                (call_script, 'script_coop_ctx_send_message'),
+                (store_sub, reg0, ':after', ':before'),
+                (try_begin), (gt, reg0, 0), (str_store_string, s49, '@You gained {reg0} experience.'),
+                    (call_script, 'script_coop_ctx_send_message'), (try_end),
+            (else_try), (party_add_xp, CTX_PARTY, ':xp'),
+            (try_end)]),
         ('coop_ctx_add_xp', [(store_script_param, ':xp', 1),
             (try_begin), (gt, CTX_PLAYER, 0), (add_xp_to_troop, ':xp', CTX_TROOP),
             (else_try), (add_xp_as_reward, ':xp'), (try_end)])]
@@ -1029,21 +1044,24 @@ def install_menus(menus):
             (assign, '$g_mirror_count', 0),
             (multiplayer_send_2_int_to_server, CLIENT, EV_MENU_CHOOSE, ':native_option'),
             (change_screen_return)]))
+    # Native screens (loot, party exchange) open only from a menu, and return to it
+    # when closed: the client opens them here, then reports the close and goes back.
+    screen_host = [(assign, '$g_ctx_screen_frames', 0),
+        (try_begin), (gt, '$g_ctx_screen_open', 0),
+            (call_script, 'script_coop_ctx_client_screen_settle'), (change_screen_return),
+        (else_try), (eq, '$g_ctx_screen_pending', 1), (assign, '$g_ctx_screen_pending', 0),
+            (assign, '$g_coop_trade_screen_open', 1), (assign, '$g_ctx_screen_open', 1),
+            (change_screen_loot, LOOT_TROOP),
+        (else_try), (eq, '$g_ctx_screen_pending', 2), (assign, '$g_ctx_screen_pending', 0),
+            (call_script, 'script_coop_ctx_client_open_exchange'),
+        (else_try), (change_screen_return),
+        (try_end)]
+    menus += [('coop_screen_host', 0, ' ', 'none', screen_host, [('continue', [], 'Continue...', [(change_screen_return)])])]
     menus += [('coop_menu_mirror', mnf_scale_picture, '{s50}', 'none', load, options),
               ('coop_menu_mirror_close', 0, ' ', 'none', [(change_screen_return)], [])]
 
 def client_triggers():
     return [
-        # Native loot and party-exchange screens open from the map, like requested menus.
-        (0, [(neg|multiplayer_is_server), (multiplayer_is_campaign), (gt, '$g_ctx_screen_pending', 0),
-             (assign, ':screen', '$g_ctx_screen_pending'), (assign, '$g_ctx_screen_pending', 0),
-             (assign, '$g_ctx_screen_frames', 0),
-             (try_begin), (eq, ':screen', 1),
-                 (assign, '$g_coop_trade_screen_open', 1), (assign, '$g_ctx_screen_open', 1),
-                 (change_screen_loot, LOOT_TROOP),
-             (else_try),
-                 (call_script, 'script_coop_ctx_client_open_exchange'),
-             (try_end)]),
         # Back on the map after a Native screen: report it closed. Map triggers do
         # not run while the screen is up, so a few map frames means it has closed.
         (0, [(neg|multiplayer_is_server), (multiplayer_is_campaign), (gt, '$g_ctx_screen_open', 0),
