@@ -16,16 +16,30 @@ Automation is test-only. The plugin acts on `WARBAND_COOP_AUTOLOAD_SLOT` and
 `WARBAND_COOP_AUTOJOIN` set by the launcher, only for NativeCoopProbe on
 loopback with Steam off. A normal launch is unchanged.
 
+## Vanilla rework to check in-game (branch `vanilla-rework`, untested)
+
+Native's own encounter and post-battle menus now run on the host for each
+player. See `VANILLA_ARCHITECTURE.md` for what changed and how to roll back.
+
+- Meeting a hostile AI party opens Native's "simple_encounter" menu (Attack,
+  Leave, and so on), not the old "Your party encounters a hostile force!".
+- After a battle: Native's debrief ("battle_debrief"), then total victory with
+  Native's loot screen and the prisoner/rescued-troops exchange screen.
+- Defeat leads to Native's total-defeat menu.
+- Soldiers rout when their morale breaks (never in the first 45 seconds). A
+  side whose remaining soldiers are all fleeing loses.
+- B no longer opens the old battle-server list. Use the camp menu, F10, or
+  walk onto a battle.
+
 ## Retained battle fixes to check in-game
 
 - Camp button opens Native's camp menu; "Join a nearby battle." is listed.
 - Moving onto an active battle opens "You come across a battle between..."
   once per battle, even when another player is fighting in it.
-- Victory: XP/gold message, then Take loot (Native loot screen) and Take
-  prisoners (Native exchange screen). Items/prisoners persist after reconnect.
 - Kills during the fight add XP to the killer (hero or troop stack).
 - After any outcome (including defeat or retreat), nearby AI armies move again
   and an AI army with no fit troops left is removed, its lords escaping.
+- A 3-second cooldown applies before either army can start another battle.
 
 Use **NativeCoopProbe / CoopNativePvPTest**, port 7440. The isolated runtime has
 one graphical host and two playable clients. The older NativeCoopTest build

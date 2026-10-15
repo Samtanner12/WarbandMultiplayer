@@ -1,7 +1,11 @@
 # Native gameplay with multiplayer on top — architecture proposal
 
-Status: proposal, not implemented. Written 2026-10-15 after the retained-battle
-fixes (camp, joining, loot, XP, banners, encounter release).
+Status: implemented on branch `vanilla-rework` (2026-10-15). It builds and the
+unit tests pass, but **none of it has been played in-game yet**. See
+"Implementation status" at the end.
+
+Written 2026-10-15 after the retained-battle fixes (camp, joining, loot, XP,
+banners, encounter release).
 
 ## How it works today
 
@@ -109,3 +113,31 @@ requirement is ever relaxed.
   beyond `getMainParty`.
 - The context switch must never interleave: menus run on the main thread, one
   player at a time.
+
+## Implementation status (branch `vanilla-rework`)
+
+Code: `runtime/NativeMissionProbe/Source/module_player_context.py` (new) and
+`module_retained_campaign_battles.py`. Report of what the build rewrote:
+`logs/player-context-report.txt`.
+
+| Step | State |
+| --- | --- |
+| 1. Player context | Done at build time. `p_main_party`/`trp_player` become `$g_ctx_party`/`$g_ctx_troop` in 77 Native scripts and 8 menus. Player-scoped globals and casualty parties are banked per player. Contexts nest: a second player's context suspends the first and restores it on exit. The engine `getMainParty` hook was not needed. |
+| 2. Host-run menus | Done for hostile encounters and post-battle: `simple_encounter`, retreat, `battle_debrief`, `total_victory`, `enemy_slipped_away`, `total_defeat`, `permanent_damage`. The host runs the menu, the client shows a mirror and sends the chosen option. Camp stays a client menu, because the mod's realm options are client menus. |
+| 3. Screen sessions | Done: Native loot and party-exchange (prisoners, rescued troops) screens open on the client; the host validates the close-diff. |
+| 4. Native battle triggers | Partly done. Label banners, Native courage, morale and routing (`apply_*_on_courage_scores`, `decide_run_away_or_not`) run on the host. A routed side counts as beaten. Not ported: reinforcement waves, AI battle tactics, and the Native victory messages. |
+| 5. Native post-battle | Done: `party_give_xp_and_gold`, `party_calculate_loot` and the total-victory chain run in the winner's context. The custom rewards module is deleted. |
+| 6. Legacy removal | Partly done. Removed: the custom rewards and debrief, the "Fight locally" option, the overlay banners, the B-key battle-server chooser and its reconnect. Kept as fallbacks: the old encounter menu (`$g_coop_legacy_encounter_menu=1`) and the dedicated-battle code in `module_coop_scripts.py`. |
+
+### Not yet handled
+
+- Lord capture conversations, captivity and Native's "join battle" menus are not mirrored.
+- Relations with `fac_player_faction` are shared between players.
+- A player who disconnects mid-battle loses that battle's results.
+- Map animations: the user reported missing campaign-map animations; the cause is unknown.
+
+### Rollback
+
+`git checkout main`, then rebuild into the game module folder. Alternatively,
+copy the `.txt` files from the newest `build/module-backups/NativeCoopProbe-*`
+folder back into `runtime/NativeMissionProbe/Game/Modules/NativeCoopProbe`.

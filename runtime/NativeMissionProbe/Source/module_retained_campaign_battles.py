@@ -372,6 +372,10 @@ def install_scripts(scripts):
 def install_triggers(triggers):
     # Remove the old global invite: admission belongs to coop_retained_start.
     triggers[:]=[t for t in triggers if not any(isinstance(op,tuple) and op[:2]==(eq,'$g_encounter_cycle_requested') for op in t[1])]
+    # Battles run inside the campaign host on the same connection; the old
+    # dedicated battle-server chooser (B) and its reconnect are dead paths.
+    legacy=[(eq,'$g_coop_battle_available',1),(eq,'$g_coop_battle_connect_pending',1)]
+    triggers[:]=[t for t in triggers if not any(isinstance(op,tuple) and op in legacy for op in t[1])]
     for i,(delay,ops) in enumerate(triggers):
         if any(isinstance(op,tuple) and op[:2]==(eq,'$g_cycle_map_restore') for op in ops):
             ops[:]=[(gt,op[1],0) if isinstance(op,tuple) and op[0]==ge and op[1] in ['$g_cycle_return_party_a','$g_cycle_return_party_b'] else op for op in ops]
