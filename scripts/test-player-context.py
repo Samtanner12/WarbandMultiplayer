@@ -22,6 +22,11 @@ class Translation(unittest.TestCase):
         self.assertEqual(ctx.translate((change_screen_return,)),[(assign,'$g_ctx_menu_close',1)])
         self.assertEqual(ctx.translate((change_screen_mission,)),[(assign,'$g_ctx_menu_battle',1)])
         self.assertEqual(ctx.translate((leave_encounter,)),[(call_script,'script_coop_retained_release_encounter','$g_ctx_party')])
+    def test_bare_operations_are_translated(self):
+        # Native writes argument-less operations as bare numbers: (change_screen_return).
+        self.assertEqual(ctx.translate(change_screen_return),[(assign,'$g_ctx_menu_close',1)])
+        self.assertEqual(ctx.translate(change_screen_mission),[(assign,'$g_ctx_menu_battle',1)])
+        self.assertEqual(ctx.translate(leave_encounter),[(call_script,'script_coop_retained_release_encounter','$g_ctx_party')])
     def test_player_references_follow_the_context(self):
         self.assertEqual(ctx.translate((troop_is_wounded,'trp_player')),[(troop_is_wounded,'$g_ctx_troop')])
         self.assertEqual(ctx.translate((party_add_xp,'p_main_party',5)),[(party_add_xp,'$g_ctx_party',5)])

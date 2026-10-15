@@ -91,8 +91,11 @@ DEFAULT_PARTY_ARITY = dict((globals()[n], k) for n, k in [('remove_member_from_p
     ('store_party_size_wo_prisoners', 2)] if n in globals())
 
 def as_op(op):
-    # Native writes some operations as lists.
-    return tuple(op) if isinstance(op, list) else op
+    # Native writes some operations as lists, and argument-less ones such as
+    # (change_screen_return) as a bare number.
+    if isinstance(op, list): return tuple(op)
+    if isinstance(op, (int, long)): return (op,)
+    return op
 
 def translate(op):
     """Menu-only operations become host-side flags; context references are rewritten."""
