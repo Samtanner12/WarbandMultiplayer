@@ -31,8 +31,21 @@ class Translation(unittest.TestCase):
         self.assertEqual(ctx.translate((change_screen_exchange_with_party,'p_temp_party')),[(call_script,'script_coop_ctx_open_exchange','p_temp_party')])
         self.assertEqual(ctx.translate((get_achievement_stat,':n',1,0)),[(assign,':n',0)])
     def test_single_player_scenes_are_dropped(self):
-        self.assertEqual(ctx.translate((call_script,'script_setup_troop_meeting',':t',':d')),[])
         self.assertEqual(ctx.translate((end_current_battle,)),[])
+    def test_meetings_become_host_conversations(self):
+        self.assertEqual(ctx.translate((call_script,'script_setup_party_meeting','$g_encountered_party')),
+                         [(call_script,'script_coop_ctx_party_meeting','$g_encountered_party')])
+        self.assertEqual(ctx.translate((call_script,'script_setup_troop_meeting',':t',':d')),
+                         [(call_script,'script_coop_ctx_troop_meeting',':t',':d')])
+    def test_conversation_operations_use_the_context(self):
+        self.assertEqual(ctx.dialog_translate([store_conversation_troop,'$g_talk_troop']),[(assign,'$g_talk_troop','$g_ctx_talk_troop')])
+        self.assertEqual(ctx.dialog_translate((store_repeat_object,':o')),[(assign,':o','$g_ctx_repeat_object')])
+        self.assertEqual(ctx.dialog_translate((add_xp_as_reward,50)),[(add_xp_to_troop,50,'$g_ctx_troop')])
+        self.assertEqual(ctx.dialog_translate((agent_play_sound,'$g_talk_agent',1)),[])
+        self.assertEqual(ctx.translate((store_character_level,':lvl')),[(store_character_level,':lvl','$g_ctx_troop')])
+    def test_dialog_text_follows_the_players_gender(self):
+        self.assertEqual(ctx.dialog_text('{!}Hello {sir/madam}, {playername}.'),'@Hello {reg47?madam:sir}, {s47}.')
+        self.assertEqual(ctx.dialog_text('{reg1?a:b}'),'@{reg1?a:b}')
         self.assertEqual(ctx.translate((call_script,'script_clear_party_group','$g_enemy_party')),
                          [(call_script,'script_coop_ctx_clear_party_group','$g_enemy_party')])
 
@@ -74,6 +87,21 @@ class Build(unittest.TestCase):
             self.assertTrue(any(isinstance(op,tuple) and op[0]==agent_set_slot for op in ops),name)
         self.assertTrue(mentions(built['coop_retained_courage_death'],'script_cf_coop_retained_agent_side0'))
         self.assertFalse(mentions(built['coop_retained_run_away'],'script_cf_coop_retained_agent_side0'))
+
+class Conversations(unittest.TestCase):
+    def test_every_state_dispatches_and_encounters_open_one(self):
+        self.assertIn('coop_dlg_state',built);self.assertIn('coop_dlg_advance',built);self.assertIn('coop_dlg_choose',built)
+        states=[op[1+1] for op in built['coop_dlg_state'] if isinstance(op,tuple) and op[0]==eq and op[1]==':state']
+        self.assertGreater(len(states),1000)
+        for sid in states:self.assertIn('coop_dlg_%d'%sid,built)
+        self.assertTrue(mentions(built['coop_menu_show_simple_encounter'],'script_coop_ctx_party_meeting'))
+        self.assertTrue(mentions(built['coop_menu_present'],'script_coop_dlg_advance'))
+    def test_answers_go_to_the_conversation_first(self):
+        self.assertTrue(mentions(built['coop_menu_choose'],'script_coop_dlg_choose'))
+    def test_looters_line_uses_the_encountered_template(self):
+        start=built['coop_dlg_%d'%ctx.DLG_START]
+        self.assertTrue(any(isinstance(op,tuple) and op[0]==party_get_template_id for op in start))
+        self.assertFalse(any(isinstance(op,tuple) and op[0] in (store_conversation_troop,agent_play_sound,encounter_attack) for op in start))
 
 class Nesting(unittest.TestCase):
     def test_context_suspends_and_resumes_the_outer_player(self):

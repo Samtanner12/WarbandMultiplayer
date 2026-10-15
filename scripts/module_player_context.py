@@ -59,11 +59,17 @@ PLAYER_SCOPED = re.compile(r'^\$(g_encounter|g_encountered|encountered_party|g_e
     r'npc_grievance|npc_praise|npc_with_grievance|disable_npc_complaints|g_move_heroes|any_allies|'
     r'g_relation_boost|g_private_battle|g_disable_condescending|g_joined_battle_to_help|g_player_luck|'
     r'g_prison_heroes|pin_number|players_kingdom|player_honor|player_right_to_rule|npc_with_personality|'
-    r'npc_map_talk_context|g_talk_troop|supported_pretender)')
-# Single-player conversation scenes and the engine's main-party battle.
-DROPPED_SCRIPTS = ['script_setup_party_meeting', 'script_setup_troop_meeting',
-                   'script_let_nearby_parties_join_current_battle']
-REPLACED_SCRIPTS = {'script_clear_party_group': 'script_coop_ctx_clear_party_group'}
+    r'npc_map_talk_context|g_talk_troop|g_talk_agent|supported_pretender|g_ctx_talk_troop|g_ctx_dialog|'
+    r'g_ctx_repeat_object)')
+# Conversation state the host keeps per player between the player's answers.
+DIALOG_GLOBALS = ['$g_ctx_talk_troop', '$g_ctx_dialog', '$g_ctx_repeat_object']
+DIALOG_SLOT, DLG_STATE_SLOT = 19396, 19395   # player slots: answering a Native conversation; its state
+DLG_ENTRY_BASE, DLG_REPEAT_BASE = 19400, 19420   # player slots: answer row -> dialog entry, repeat object
+# The engine's main-party battle; Native's meeting scenes become host-run conversations.
+DROPPED_SCRIPTS = ['script_let_nearby_parties_join_current_battle']
+REPLACED_SCRIPTS = {'script_clear_party_group': 'script_coop_ctx_clear_party_group',
+                    'script_setup_party_meeting': 'script_coop_ctx_party_meeting',
+                    'script_setup_troop_meeting': 'script_coop_ctx_troop_meeting'}
 DROPPED_OPS = set(globals()[name] for name in ['set_jump_mission', 'jump_to_scene', 'set_party_battle_mode',
     'set_battle_advantage', 'unlock_achievement', 'set_achievement_stat',
     'party_quick_attach_to_current_battle', 'rest_for_hours', 'rest_for_hours_interactive', 'set_jump_entry',
@@ -76,10 +82,23 @@ def rewrite_refs(op):
     if not isinstance(op, tuple): return op
     return (op[0],) + tuple(CTX_PARTY if a == 'p_main_party' else CTX_TROOP if a == 'trp_player' else a for a in op[1:])
 
+# Operations whose last parameter defaults to the single player's troop or party.
+DEFAULT_TROOP_ARITY = dict((globals()[n], k) for n, k in [('store_troop_gold', 2), ('store_character_level', 2),
+    ('add_xp_to_troop', 2), ('store_skill_level', 3)] if n in globals())
+DEFAULT_PARTY_ARITY = dict((globals()[n], k) for n, k in [('remove_member_from_party', 2), ('store_party_size', 2),
+    ('store_party_size_wo_prisoners', 2)] if n in globals())
+
+def as_op(op):
+    # Native writes some operations as lists.
+    return tuple(op) if isinstance(op, list) else op
+
 def translate(op):
     """Menu-only operations become host-side flags; context references are rewritten."""
+    op = as_op(op)
     if not isinstance(op, tuple): return [op]
     code = op[0] & ~FLAGS
+    if DEFAULT_TROOP_ARITY.get(code) == len(op): op = op + (CTX_TROOP,)
+    if DEFAULT_PARTY_ARITY.get(code) == len(op): op = op + (CTX_PARTY,)
     if code == call_script and op[1] in DROPPED_SCRIPTS: return []
     if code == call_script and op[1] in REPLACED_SCRIPTS: return [rewrite_refs((op[0], REPLACED_SCRIPTS[op[1]]) + op[2:])]
     if code in DROPPED_OPS: return []
@@ -105,11 +124,21 @@ def translated(ops):
     return out
 
 def called_scripts(ops):
+    ops = [as_op(op) for op in ops]
     return [op[1][len('script_'):] for op in ops if isinstance(op, tuple) and op[0] & ~FLAGS == call_script
             and isinstance(op[1], str) and op[1].startswith('script_') and op[1] not in DROPPED_SCRIPTS]
 
 def globals_in(ops):
-    return set(a for op in ops if isinstance(op, tuple) for a in op[1:] if isinstance(a, str) and a.startswith('$'))
+    return set(a for op in map(as_op, ops) if isinstance(op, tuple) for a in op[1:] if isinstance(a, str) and a.startswith('$'))
+
+def closure_op(op):
+    """Native scripts reached from host-run menus and conversations. They also run
+    outside a context (world triggers, client town visits), where the context
+    globals read 0: the ids of p_main_party and trp_player."""
+    op = rewrite_refs(as_op(op))
+    if isinstance(op, tuple) and op[0] & ~FLAGS == add_xp_as_reward:
+        return (call_script, 'script_coop_ctx_add_xp', op[1])
+    return op
 
 def menu_ops(menu):
     ops = list(menu[4])
@@ -164,17 +193,20 @@ def install_native(scripts):
     menus = dict((m[0], m) for m in game_menus)
     by_name = dict(scripts)
     # Native scripts reachable from the mirrored menus run in context too.
+    from module_dialogs import dialogs
     closure, pending = set(), []
     for name in MIRRORED_MENUS: pending += called_scripts(menu_ops(menus[name]))
+    for dialog in dialogs: pending += called_scripts(list(dialog[2]) + list(dialog[5]))
     pending += ['encounter_init_variables', 'encounter_calculate_fit']
     while pending:
         name = pending.pop()
         if name in closure or name not in by_name or name.startswith('coop_'): continue
         closure.add(name); pending += called_scripts(by_name[name])
     for index, (name, ops) in enumerate(scripts):
-        if name in closure: scripts[index] = (name, [rewrite_refs(op) for op in ops])
-    referenced = set()
+        if name in closure: scripts[index] = (name, [closure_op(op) for op in ops])
+    referenced = set(DIALOG_GLOBALS)
     for name in MIRRORED_MENUS: referenced |= globals_in(menu_ops(menus[name]))
+    for dialog in dialogs: referenced |= globals_in(list(dialog[2]) + list(dialog[5]))
     for name in closure: referenced |= globals_in(by_name[name])
     bank = sorted(g for g in referenced if PLAYER_SCOPED.match(g))
     write_report(closure, bank, sorted(referenced - set(bank)))
@@ -230,6 +262,7 @@ def install_native(scripts):
                       ('coop_menu_choose_' + name, choose_script(menus[name]))]
     generated += [('coop_menu_present', present_script()), ('coop_menu_choose', choose_dispatch()),
                   ('coop_ctx_start_encounter', start_encounter_script())] + session_scripts() + battle_scripts()
+    generated += dialog_scripts(dialogs)
     scripts += generated
 
     for name, ops in scripts:
@@ -264,8 +297,9 @@ def show_script(menu):
            (assign, '$g_ctx_menu_close', 0), (assign, '$g_ctx_menu_battle', 0), (assign, '$g_ctx_menu_mesh', 0),
            (assign, '$g_ctx_menu_screen', 0),
            (try_begin)] + translated(menu[4]) + [(try_end),
+           # A conversation the menu opened (Native's party meeting) goes first.
            (try_begin), (lt, '$g_ctx_menu_next', 0), (eq, '$g_ctx_menu_close', 0), (eq, '$g_ctx_menu_battle', 0),
-           (eq, '$g_ctx_menu_screen', 0),
+           (eq, '$g_ctx_menu_screen', 0), (eq, '$g_ctx_dialog', 0),
            (multiplayer_send_3_int_to_player, ':player', SERVER, EV_MENU_BEGIN, '$g_ctx_menu_mesh', 0)] + send_string(menu[2])
     for index, option in enumerate(menu[5][:MAX_OPTIONS]):
         ops += [(try_begin)] + translated(option[1]) + [
@@ -277,8 +311,11 @@ def choose_script(menu):
     ops = [(store_script_param, ':player', 1), (store_script_param, ':option', 2),
            (assign, '$g_ctx_menu_close', 0), (assign, '$g_ctx_menu_battle', 0), (assign, '$g_ctx_menu_screen', 0)]
     for index, option in enumerate(menu[5][:MAX_OPTIONS]):
-        ops += [(try_begin), (eq, ':option', index)] + translated(option[1]) + [
-            (try_begin)] + translated(option[3]) + [(try_end), (try_end)]
+        ops += [(try_begin), (eq, ':option', index)] + debug('%s: checking "%s"' % (menu[0], option[0])) + translated(option[1]) + [
+            (assign, reg55, 0), (try_begin)] + translated(option[3]) + [(assign, reg55, 1), (try_end),
+            (assign, reg58, '$g_ctx_menu_battle'), (assign, reg59, '$g_ctx_menu_close'), (assign, reg60, '$g_ctx_menu_next')
+            ] + debug('%s: ran "%s" (completed {reg55}); battle {reg58}, close {reg59}, next {reg60}' % (menu[0], option[0])) + [
+            (try_end)]
     return ops + [(try_begin), (lt, '$g_ctx_menu_next', 0), (eq, '$g_ctx_menu_close', 0), (eq, '$g_ctx_menu_battle', 0),
                   (eq, '$g_ctx_menu_screen', 0), (assign, '$g_ctx_menu_next', 'mnu_' + menu[0]), (try_end)]
 
@@ -291,12 +328,18 @@ def present_script():
     for name in MIRRORED_MENUS:
         ops += [(try_begin), (eq, ':menu', 'mnu_' + name),
                 (call_script, 'script_coop_menu_show_' + name, ':player'), (assign, ':handled', 1), (try_end)]
-    ops += [(try_begin), (eq, ':handled', 0), (assign, '$g_ctx_menu_close', 1),
+    ops += [(try_begin), (eq, '$g_ctx_dialog', 1), (assign, '$g_ctx_dialog', 0),
+                (call_script, 'script_coop_dlg_advance', ':player', DLG_START),
+            (try_end),
+            (try_begin), (eq, ':handled', 0), (assign, '$g_ctx_menu_close', 1),
                 (str_store_string, s49, '@That part of the Native campaign is not available in multiplayer yet.'),
                 (call_script, 'script_coop_ctx_send_message'),
                 (call_script, 'script_coop_retained_release_encounter', CTX_PARTY),
             (try_end),
         (try_end),
+        (assign, reg56, ':player'), (player_get_slot, reg57, ':player', MENU_SLOT), (assign, reg58, '$g_ctx_menu_battle'),
+        (assign, reg59, '$g_ctx_menu_close'), (assign, reg60, '$g_ctx_menu_screen')]
+    ops += debug('present to player {reg56}: menu {reg57}, battle {reg58}, close {reg59}, screen {reg60}') + [
         (try_begin), (eq, '$g_ctx_menu_screen', 1),
         (else_try), (eq, '$g_ctx_menu_battle', 1),
             (multiplayer_send_int_to_player, ':player', SERVER, EV_MENU_CLOSE),
@@ -307,8 +350,10 @@ def present_script():
                 (call_script, 'script_coop_retained_release_encounter', CTX_PARTY),
             (try_end),
         (else_try), (eq, '$g_ctx_menu_close', 1),
-            (player_set_slot, ':player', MENU_SLOT, 0),
+            (player_set_slot, ':player', MENU_SLOT, 0), (player_set_slot, ':player', DIALOG_SLOT, 0),
             (multiplayer_send_int_to_player, ':player', SERVER, EV_MENU_CLOSE),
+            # Back on the map, as Native's map screen ends any encounter.
+            (call_script, 'script_coop_retained_release_encounter', CTX_PARTY),
         (try_end)]
     return ops
 
@@ -319,15 +364,26 @@ def commit_ops():
             (call_script, 'script_coop_push_player_inventory', ':player'),
             (call_script, 'script_coop_ctx_push_own_roster', ':player')]
 
+MENU_DEBUG = True   # host-side [menu] trace while the mirror is being brought up
+
+def debug(text):
+    return [(display_message, '@[menu] ' + text, 0xFFFFAA00)] if MENU_DEBUG else []
+
 def choose_dispatch():
-    ops = [(store_script_param, ':player', 1), (store_script_param, ':option', 2), (try_begin),
+    ops = [(store_script_param, ':player', 1), (store_script_param, ':option', 2),
+           (assign, reg56, ':player'), (assign, reg57, ':option'),
+           (player_get_slot, reg58, ':player', MENU_SLOT), (player_get_slot, reg59, ':player', slot_player_coop_char_state)]
+    ops += debug('player {reg56} chose option {reg57}; menu slot {reg58}, char state {reg59}') + [(try_begin),
            (player_is_active, ':player'), (player_slot_eq, ':player', slot_player_coop_char_state, coop_char_state_ready),
            (player_get_slot, ':menu', ':player', MENU_SLOT), (gt, ':menu', 0),
-           (call_script, 'script_coop_ctx_enter', ':player'), (assign, '$g_ctx_menu_next', -1)]
+           (call_script, 'script_coop_ctx_enter', ':player'), (assign, '$g_ctx_menu_next', -1),
+           (try_begin), (player_slot_eq, ':player', DIALOG_SLOT, 1),
+               (call_script, 'script_coop_dlg_choose', ':player', ':option'),
+           (else_try)]
     for name in MIRRORED_MENUS:
         ops += [(try_begin), (eq, ':menu', 'mnu_' + name),
                 (call_script, 'script_coop_menu_choose_' + name, ':player', ':option'), (try_end)]
-    return ops + [(call_script, 'script_coop_menu_present', ':player'),
+    return ops + [(try_end), (call_script, 'script_coop_menu_present', ':player'),
                   (call_script, 'script_coop_ctx_exit', ':player')] + commit_ops() + [(try_end)]
 
 def start_encounter_script():
@@ -336,7 +392,10 @@ def start_encounter_script():
     # $g_coop_legacy_encounter_menu = 1, keeps the multiplayer encounter menu.
     return [(store_script_param, ':player', 1), (store_script_param, ':party', 2),
         (store_script_param, ':party2', 3), (store_script_param, ':terrain', 4),
-        (try_begin), (eq, '$g_coop_legacy_encounter_menu', 0), (lt, ':party2', 0),
+        (assign, reg56, ':player'), (assign, reg57, ':party'), (assign, reg58, ':party2')] + debug(
+        'encounter: player {reg56}, party {reg57}, second party {reg58}') + [
+        # The multiplayer engine reports "no second party" as 0 (p_main_party), not -1.
+        (try_begin), (eq, '$g_coop_legacy_encounter_menu', 0), (le, ':party2', 0),
             (gt, ':party', 0), (party_is_active, ':party'),
             (neg|is_between, ':party', multiplayer_campaign_player_parties_begin, multiplayer_campaign_player_parties_end),
             (call_script, 'script_coop_ctx_enter', ':player'),
@@ -354,7 +413,7 @@ def start_encounter_script():
             (assign, '$g_ctx_menu_screen', 0),
             (call_script, 'script_coop_menu_present', ':player'),
             (call_script, 'script_coop_ctx_exit', ':player'),
-        (else_try),
+        (else_try)] + debug('encounter: legacy multiplayer menu') + [
             (multiplayer_send_4_int_to_player, ':player', SERVER,
                 multiplayer_event_multiplayer_campaign_server_event_player_start_encounter, ':party', ':party2', ':terrain'),
         (try_end)]
@@ -689,6 +748,184 @@ def host_client_events():
         (else_try), (eq, ':event_type', EV_RELEASE_PRISONERS), (store_script_param, ':ctx_a', 3), (store_script_param, ':ctx_b', 4),
             (call_script, 'script_coop_ctx_release_prisoners', ':player_no', ':ctx_a', ':ctx_b'),
         (try_end)] + [(neq, ':event_type', event) for event in HOST_EVENT_IDS]
+
+# --- Native conversations, run on the host and mirrored like menus -------------
+# Each conversation state compiles to one script. Mode 0 picks the partner's
+# line (first match, as the engine does), mode 1 sends the player's answers,
+# mode 2 runs the chosen answer. Lines use the conversation partner and the
+# encountered party of the player's context, not the engine's dialog screen.
+from header_dialogs import anyone, plyr, party_tpl, auto_proceed
+DLG_CLOSE = -1
+DLG_START = 0
+CONV_DROPPED_OPS = set(globals()[n] for n in ['talk_info_show', 'talk_info_set_relation_bar', 'talk_info_set_line',
+    'set_conversation_speaker_troop', 'set_conversation_speaker_agent', 'play_sound', 'agent_play_sound',
+    'play_cue_track', 'music_set_situation', 'music_set_culture', 'encounter_attack'] if n in globals())
+UNSUPPORTED_SCREENS = set(globals()[n] for n in ['change_screen_trade', 'change_screen_exchange_members',
+    'change_screen_give_members', 'change_screen_equip_other', 'change_screen_view_character',
+    'change_screen_buy_mercenaries', 'change_screen_trade_prisoners', 'change_screen_notes', 'dialog_box']
+    if n in globals())
+DIALOG_DROPPED_SCRIPTS = ['script_setup_talk_info', 'script_setup_talk_info_companions']
+GENDERED = re.compile(r'\{([^{}?:/]*)/([^{}?:/]*)\}')
+TEXT_SETUP = [(str_store_troop_name, s47, CTX_TROOP), (troop_get_type, reg47, CTX_TROOP), (val_min, reg47, 1)]
+
+def dialog_translate(op):
+    op = as_op(op)
+    if not isinstance(op, tuple): return [op]
+    code = op[0] & ~FLAGS
+    if code in CONV_DROPPED_OPS: return []
+    if code == call_script and op[1] in DIALOG_DROPPED_SCRIPTS: return []
+    if code == store_conversation_troop: return [(assign, op[1], '$g_ctx_talk_troop')]
+    if code == store_conversation_agent: return [(assign, op[1], -1)]
+    if code == store_encountered_party: return [(assign, op[1], '$g_encountered_party')]
+    if code == store_encountered_party2: return [(assign, op[1], '$g_encountered_party_2')]
+    if code == store_repeat_object: return [(assign, op[1], '$g_ctx_repeat_object')]
+    if code == store_partner_quest: return [(call_script, 'script_coop_ctx_partner_quest'), (assign, op[1], reg0)]
+    if code == store_partner_faction: return [(store_troop_faction, op[1], '$g_ctx_talk_troop')]
+    if code == add_xp_as_reward: return [(add_xp_to_troop, op[1], CTX_TROOP)]
+    if code in UNSUPPORTED_SCREENS:
+        return [(str_store_string, s49, '@That screen is not available in multiplayer yet.'),
+                (call_script, 'script_coop_ctx_send_message')]
+    return translate(op)
+
+def dialog_ops(ops):
+    out = []
+    for op in ops: out.extend(dialog_translate(op))
+    return out
+
+def dialog_text(text):
+    text = text.replace('{!}', '').replace('{playername}', '{s47}')
+    return '@' + GENDERED.sub(r'{reg47?\2:\1}', text)
+
+def partner_ops(partner):
+    low = partner & 0xfff
+    if partner & party_tpl:
+        return [(party_get_template_id, ':dlg_tpl', '$g_encountered_party'), (eq, ':dlg_tpl', low)]
+    if low == anyone: return []
+    return [(eq, '$g_ctx_talk_troop', low)]
+
+def repeat_loop(partner, counts):
+    kind = partner & 0x7000
+    if kind == 0x1000: return [(try_for_range, ':dlg_obj', 0, counts['factions'])]
+    if kind == 0x2000: return [(try_for_parties, ':dlg_obj')]
+    if kind == 0x3000: return [(try_for_range, ':dlg_obj', 0, counts['troops'])]
+    if kind == 0x4000: return [(try_for_range, ':dlg_obj', 0, 100)]
+    if kind == 0x5000: return [(try_for_range, ':dlg_obj', 0, 1000)]
+    return None
+
+def state_script(entries, npc, answers, state_id, counts):
+    ops = [(store_script_param, ':dlg_mode', 1), (store_script_param, ':dlg_arg', 2),
+           (assign, ':dlg_hit', -1), (assign, ':dlg_next', DLG_CLOSE), (assign, ':dlg_auto', 0), (assign, ':dlg_rows', 0),
+           (store_sub, ':dlg_player', CTX_PLAYER, 1),
+           (try_begin), (eq, ':dlg_mode', 0)]
+    for i in npc:
+        d = entries[i]
+        ops += [(try_begin), (eq, ':dlg_hit', -1)] + partner_ops(d[0]) + dialog_ops(d[2]) + [
+            (assign, ':dlg_hit', i), (assign, ':dlg_next', state_id[d[4]]), (assign, ':dlg_auto', 1 if d[0] & auto_proceed else 0),
+            (try_begin)] + dialog_ops(d[5]) + [(try_end)] + TEXT_SETUP + [(str_store_string, s48, dialog_text(d[3])),
+            (try_end)]
+    ops += [(else_try), (eq, ':dlg_mode', 1)]
+    for i in answers:
+        d = entries[i]
+        body = [(lt, ':dlg_rows', MAX_OPTIONS)] + partner_ops(d[0]) + dialog_ops(d[2]) + [
+            (store_add, ':dlg_slot', DLG_ENTRY_BASE, ':dlg_rows'), (player_set_slot, ':dlg_player', ':dlg_slot', i),
+            (store_add, ':dlg_slot', DLG_REPEAT_BASE, ':dlg_rows'),
+            (player_set_slot, ':dlg_player', ':dlg_slot', '$g_ctx_repeat_object')] + TEXT_SETUP + [
+            (str_store_string, s49, dialog_text(d[3])),
+            (multiplayer_send_3_int_to_player, ':dlg_player', SERVER, EV_MENU_OPTION, ':dlg_rows', 0),
+            (multiplayer_send_string_to_player, ':dlg_player', EV_MENU_STRING, s49),
+            (val_add, ':dlg_rows', 1)]
+        loop = repeat_loop(d[0], counts)
+        if loop: ops += loop + [(assign, '$g_ctx_repeat_object', ':dlg_obj')] + body + [(try_end)]
+        else: ops += [(try_begin), (assign, '$g_ctx_repeat_object', 0)] + body + [(try_end)]
+    ops += [(else_try), (eq, ':dlg_mode', 2)]
+    for i in answers:
+        d = entries[i]
+        ops += [(try_begin), (eq, ':dlg_arg', i), (assign, ':dlg_next', state_id[d[4]]),
+                (try_begin)] + dialog_ops(d[5]) + [(try_end), (try_end)]
+    ops += [(try_end),
+        (try_begin), (eq, ':dlg_mode', 1), (assign, reg0, ':dlg_rows'), (else_try), (assign, reg0, ':dlg_hit'), (try_end),
+        (assign, reg1, ':dlg_next'), (assign, reg2, ':dlg_auto')]
+    return ops
+
+def dialog_scripts(entries):
+    from module_factions import factions
+    from module_troops import troops
+    from module_quests import quests
+    counts = {'factions': len(factions), 'troops': len(troops)}
+    state_id = {'close_window': DLG_CLOSE, 'start': DLG_START}
+    for d in entries:
+        for state in (d[1], d[4]):
+            if state not in state_id: state_id[state] = len(state_id) - 1
+    npc, answers = {}, {}
+    for i, d in enumerate(entries):
+        (answers if d[0] & plyr else npc).setdefault(state_id[d[1]], []).append(i)
+    generated, dispatch = [], [(store_script_param, ':mode', 1), (store_script_param, ':state', 2),
+        (store_script_param, ':arg', 3), (assign, reg0, -1), (assign, reg1, DLG_CLOSE), (assign, reg2, 0)]
+    for sid in sorted(set(npc) | set(answers)):
+        name = 'coop_dlg_%d' % sid
+        generated.append((name, state_script(entries, npc.get(sid, []), answers.get(sid, []), state_id, counts)))
+        dispatch += [(try_begin), (eq, ':state', sid), (call_script, 'script_' + name, ':mode', ':arg'), (try_end)]
+    show = [(str_store_troop_name, s46, '$g_ctx_talk_troop'), (str_store_string, s45, '@{s46}: {s48}'),
+            (multiplayer_send_3_int_to_player, ':player', SERVER, EV_MENU_BEGIN, 0, 0),
+            (multiplayer_send_string_to_player, ':player', EV_MENU_STRING, s45)]
+    advance = [(store_script_param, ':player', 1), (store_script_param, ':state', 2),
+        (assign, ':waiting', 0), (assign, ':ended', 0),
+        (try_for_range, ':step', 0, 16), (eq, ':waiting', 0), (eq, ':ended', 0),
+            (try_begin), (eq, ':state', DLG_CLOSE), (assign, ':ended', 1),
+            (else_try),
+                (call_script, 'script_coop_dlg_state', 0, ':state', 0),
+                (try_begin), (lt, reg0, 0), (assign, ':ended', 1),
+                (else_try),
+                    (assign, ':state', reg1),
+                    # Auto-proceed lines are never shown; the partner speaks again.
+                    (eq, reg2, 0)] + show + [
+                    (player_set_slot, ':player', DLG_STATE_SLOT, ':state'), (assign, ':rows', 0),
+                    (try_begin), (neq, ':state', DLG_CLOSE),
+                        (call_script, 'script_coop_dlg_state', 1, ':state', 0), (assign, ':rows', reg0),
+                    (try_end),
+                    (try_begin), (le, ':rows', 0),
+                        (player_set_slot, ':player', DLG_ENTRY_BASE, -1),
+                        (multiplayer_send_3_int_to_player, ':player', SERVER, EV_MENU_OPTION, 0, 0),
+                        (str_store_string, s49, '@Continue...'),
+                        (multiplayer_send_string_to_player, ':player', EV_MENU_STRING, s49),
+                    (try_end),
+                    (multiplayer_send_2_int_to_player, ':player', SERVER, EV_MENU_SHOW, 0),
+                    (player_set_slot, ':player', DIALOG_SLOT, 1), (assign, ':waiting', 1),
+                (try_end),
+            (try_end),
+        (try_end),
+        # The conversation is over: back to the menu that opened it, as Native does.
+        (try_begin), (eq, ':waiting', 0), (player_set_slot, ':player', DIALOG_SLOT, 0),
+            (lt, '$g_ctx_menu_next', 0), (eq, '$g_ctx_menu_close', 0), (eq, '$g_ctx_menu_battle', 0),
+            (eq, '$g_ctx_menu_screen', 0),
+            (player_get_slot, ':menu', ':player', MENU_SLOT), (gt, ':menu', 0), (assign, '$g_ctx_menu_next', ':menu'),
+        (try_end),
+        (assign, reg0, ':waiting')]
+    choose = [(store_script_param, ':player', 1), (store_script_param, ':row', 2),
+        (assign, '$g_ctx_menu_close', 0), (assign, '$g_ctx_menu_battle', 0), (assign, '$g_ctx_menu_screen', 0),
+        (player_set_slot, ':player', DIALOG_SLOT, 0), (assign, ':entry', -1), (assign, ':next', DLG_CLOSE),
+        (try_begin), (is_between, ':row', 0, MAX_OPTIONS),
+            (store_add, ':slot', DLG_ENTRY_BASE, ':row'), (player_get_slot, ':entry', ':player', ':slot'),
+            (store_add, ':slot', DLG_REPEAT_BASE, ':row'), (player_get_slot, '$g_ctx_repeat_object', ':player', ':slot'),
+        (try_end),
+        (try_begin), (ge, ':entry', 0),
+            (player_get_slot, ':state', ':player', DLG_STATE_SLOT),
+            (call_script, 'script_coop_dlg_state', 2, ':state', ':entry'), (assign, ':next', reg1),
+        (try_end),
+        (call_script, 'script_coop_dlg_advance', ':player', ':next')]
+    return generated + [('coop_dlg_state', dispatch), ('coop_dlg_advance', advance), ('coop_dlg_choose', choose),
+        ('coop_ctx_party_meeting', [(store_script_param, ':party', 1),
+            (try_begin), (party_is_active, ':party'), (party_stack_get_troop_id, '$g_ctx_talk_troop', ':party', 0),
+                (assign, '$g_ctx_dialog', 1), (try_end)]),
+        ('coop_ctx_troop_meeting', [(store_script_param, ':troop', 1),
+            (assign, '$g_ctx_talk_troop', ':troop'), (assign, '$g_ctx_dialog', 1)]),
+        ('coop_ctx_partner_quest', [(assign, ':found', -1),
+            (try_for_range, ':quest', 0, len(quests)), (check_quest_active, ':quest'),
+                (quest_slot_eq, ':quest', slot_quest_giver_troop, '$g_ctx_talk_troop'), (assign, ':found', ':quest'),
+            (try_end), (assign, reg0, ':found')]),
+        ('coop_ctx_add_xp', [(store_script_param, ':xp', 1),
+            (try_begin), (gt, CTX_PLAYER, 0), (add_xp_to_troop, ':xp', CTX_TROOP),
+            (else_try), (add_xp_as_reward, ':xp'), (try_end)])]
 
 def install_menus(menus):
     load = [(try_begin), (eq, '$g_ctx_screen_open', 0), (else_try), (call_script, 'script_coop_ctx_client_screen_settle'), (try_end),

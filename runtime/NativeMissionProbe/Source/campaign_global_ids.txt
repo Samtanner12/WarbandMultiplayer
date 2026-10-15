@@ -1643,3 +1643,6 @@ $g_coop_legacy_encounter_menu
 g_ctx_screen_open
 g_ctx_menu_screen
 g_ctx_depth
+g_ctx_dialog
+g_ctx_repeat_object
+g_ctx_talk_troop
