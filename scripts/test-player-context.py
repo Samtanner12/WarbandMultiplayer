@@ -133,6 +133,16 @@ class AfterBattle(unittest.TestCase):
         load=menus['coop_screen_host'][4]
         self.assertIn((change_screen_loot,ctx.LOOT_TROOP),load)
         self.assertTrue(mentions(load,'script_coop_ctx_client_screen_settle'))
+    def test_field_battles_use_native_terrain_maps(self):
+        start=built['coop_retained_start']
+        self.assertTrue(mentions(start,'scn_random_multi_plain_large'))
+        self.assertTrue(mentions(start,'scn_random_multi_snow_large'))
+    def test_unloaded_joiners_stop_holding_the_battle(self):
+        import module_retained_campaign_battles as retained
+        self.assertTrue(mentions(built['coop_retained_register_party'],retained.JOIN_TIME_SLOT))
+    def test_screen_close_needs_a_shown_screen(self):
+        self.assertTrue(mentions(built['wse_window_opened'],'$g_ctx_screen_shown'))
+        self.assertTrue(mentions(menus['coop_screen_host'][4],'$g_ctx_screen_shown'))
     def test_victory_experience_is_reported(self):
         self.assertTrue(mentions(built['party_give_xp_and_gold'],'script_coop_ctx_party_add_xp'))
     def test_beaten_army_is_reenabled_before_clearing(self):

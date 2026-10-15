@@ -4,7 +4,7 @@ from header_common import *
 from header_operations import *
 from header_triggers import *
 from header_mission_templates import *
-from header_terrain_types import rt_water, rt_mountain
+from header_terrain_types import rt_water, rt_mountain, rt_steppe, rt_steppe_forest, rt_snow, rt_snow_forest, rt_desert, rt_desert_forest
 from module_constants import *
 import module_player_context as player_context
 
@@ -14,6 +14,8 @@ CONFIRMED=6017
 COHORT_BASE=17000
 COOLDOWN_SLOT=6040          # party slot: application time (ms) before which no new battle starts
 BATTLE_COOLDOWN_MS=3000
+JOIN_TIME_SLOT=6042           # party slot: application time (ms) it was registered for the battle
+JOIN_LOAD_TIMEOUT_MS=30000   # a human army not loaded in by then no longer holds the battle open
 DEFEAT_CLEAR_HOURS=12        # game hours a beaten army waits for its victor's Native menus
 SAVE_MIN_SIMPLE_TRIGGERS=151 # existing test saves hold this many; a save will not load with fewer
 
@@ -53,6 +55,7 @@ def install_scripts(scripts):
         (party_set_slot,':party',slot_party_coop_battle_slot,1),
         (party_set_slot,':party',6015,':team'),(party_set_slot,':party',6016,':owner'),
         (party_set_slot,':party',6017,0),
+        (store_application_time,':joined_at'),(party_set_slot,':party',JOIN_TIME_SLOT,':joined_at'),
         (try_begin),(neg|is_between,':party',centers_begin,centers_end),(disable_party,':party'),(try_end),
         (try_for_players,':recipient',1),(player_is_active,':recipient'),
             (player_slot_eq,':recipient',slot_player_coop_char_state,coop_char_state_ready),
@@ -104,6 +107,17 @@ def install_scripts(scripts):
             (try_begin),(eq,':kind',spt_town),(party_get_slot,'$g_retained_scene',':target',slot_town_walls),
             (else_try),(party_get_slot,'$g_retained_scene',':target',slot_castle_exterior),(try_end),
         (else_try),(eq,':siege',0),
+            # Native's setup_random_scene: a generated map for the terrain the
+            # armies meet on (the multiplayer variants, generated alike for every player).
+            (party_get_current_terrain,':terrain',':party'),
+            (assign,'$g_retained_scene','scn_random_multi_plain_large'),
+            (try_begin),(this_or_next|eq,':terrain',rt_steppe),(eq,':terrain',rt_steppe_forest),
+                (assign,'$g_retained_scene','scn_random_multi_steppe_large'),
+            (else_try),(eq,':terrain',rt_snow),(assign,'$g_retained_scene','scn_random_multi_snow_large'),
+            (else_try),(eq,':terrain',rt_snow_forest),(assign,'$g_retained_scene','scn_random_multi_snow_forest_large'),
+            (else_try),(eq,':terrain',rt_desert),(assign,'$g_retained_scene','scn_random_multi_desert_large'),
+            (else_try),(eq,':terrain',rt_desert_forest),(assign,'$g_retained_scene','scn_random_multi_desert_forest_large'),
+            (try_end),
         (else_try),(assign,'$g_retained_siege',-1),(try_end),
         (ge,'$g_retained_siege',0),
         (assign,'$g_cycle_attacker',':requester'),(assign,'$g_cycle_defender',':defender'),
@@ -695,7 +709,10 @@ def install_missions(missions):
                     (store_add,':slot',COHORT_BASE,':index'),(party_get_slot,':party','$g_cycle_attacker_party',':slot'),
                     (party_slot_eq,':party',6017,0),(party_get_slot,':pending_owner',':party',6016),
                     (try_begin),(lt,':pending_owner',1),(assign,':pending',1),
-                    (else_try),(player_is_active,':pending_owner'),(assign,':pending',1),(try_end),
+                    # A joining player's army that never loads in stops holding the battle open.
+                    (else_try),(player_is_active,':pending_owner'),
+                        (party_get_slot,':joined_at',':party',JOIN_TIME_SLOT),(store_application_time,':now'),
+                        (store_sub,':waited',':now',':joined_at'),(lt,':waited',JOIN_LOAD_TIMEOUT_MS),(assign,':pending',1),(try_end),
                 (try_end),
                 (eq,':pending',0),
                 # Routed soldiers no longer hold the field, as in Native.
@@ -711,6 +728,8 @@ def install_missions(missions):
                 (else_try),(eq,':side0',0),(assign,':winner',1),(try_end),
                 (try_begin),(gt,'$g_cycle_retreat_requested',0),
                     (store_sub,':retreat_team','$g_cycle_retreat_requested',1),(store_sub,':winner',1,':retreat_team'),(try_end),
+                (assign,reg56,':winner'),(assign,reg57,':side0'),(assign,reg58,':side1'),(assign,reg59,'$g_cycle_retreat_requested'),
+                ]+player_context.debug('battle over: winning side {reg56}, attackers standing {reg57}, defenders standing {reg58}, retreat {reg59}')+[
                 # Native's casualty parties per player, before losses leave the armies.
                 (assign,':human_winner',0),
                 (try_for_players,':recipient',1),(player_is_active,':recipient'),(player_slot_eq,':recipient',PARTICIPANT,1),

@@ -314,6 +314,14 @@ def install_native(scripts):
                     (call_script, 'script_coop_menu_mirror_string'),
                 (assign, ':mirror_handled', 1),
                 (try_end), (eq, ':mirror_handled', 0)]
+        if name == 'wse_window_opened':
+            # Marks a Native screen the host asked for as really shown (loot and trade use
+            # the inventory window, party exchange the party window).
+            ops[0:0] = [(store_script_param, ':ctx_window', 1),
+                (try_begin), (gt, '$g_ctx_screen_open', 0),
+                    (this_or_next|eq, ':ctx_window', window_inventory), (eq, ':ctx_window', window_party),
+                    (assign, '$g_ctx_screen_shown', 1),
+                (try_end)]
         if name == 'coop_trade_client_diff_and_send':
             # The loot screen reuses the trade close-diff against its own troop.
             for i, op in enumerate(ops):
@@ -1046,17 +1054,21 @@ def install_menus(menus):
             (change_screen_return)]))
     # Native screens (loot, party exchange) open only from a menu, and return to it
     # when closed: the client opens them here, then reports the close and goes back.
+    # The menu's code can run again before the screen appears; only a screen WSE
+    # reported as shown (wse_window_opened) counts as closed when we are back here.
     screen_host = [(assign, '$g_ctx_screen_frames', 0),
-        (try_begin), (gt, '$g_ctx_screen_open', 0),
+        (try_begin), (gt, '$g_ctx_screen_open', 0), (eq, '$g_ctx_screen_shown', 1), (assign, '$g_ctx_screen_shown', 0),
             (call_script, 'script_coop_ctx_client_screen_settle'), (change_screen_return),
+        (else_try), (gt, '$g_ctx_screen_open', 0),
         (else_try), (eq, '$g_ctx_screen_pending', 1), (assign, '$g_ctx_screen_pending', 0),
-            (assign, '$g_coop_trade_screen_open', 1), (assign, '$g_ctx_screen_open', 1),
+            (assign, '$g_ctx_screen_shown', 0), (assign, '$g_coop_trade_screen_open', 1), (assign, '$g_ctx_screen_open', 1),
             (change_screen_loot, LOOT_TROOP),
         (else_try), (eq, '$g_ctx_screen_pending', 2), (assign, '$g_ctx_screen_pending', 0),
-            (call_script, 'script_coop_ctx_client_open_exchange'),
+            (assign, '$g_ctx_screen_shown', 0), (call_script, 'script_coop_ctx_client_open_exchange'),
         (else_try), (change_screen_return),
         (try_end)]
-    menus += [('coop_screen_host', 0, ' ', 'none', screen_host, [('continue', [], 'Continue...', [(change_screen_return)])])]
+    menus += [('coop_screen_host', 0, ' ', 'none', screen_host, [('continue', [], 'Continue...', [
+        (assign, '$g_ctx_screen_shown', 0), (call_script, 'script_coop_ctx_client_screen_settle'), (change_screen_return)])])]
     menus += [('coop_menu_mirror', mnf_scale_picture, '{s50}', 'none', load, options),
               ('coop_menu_mirror_close', 0, ' ', 'none', [(change_screen_return)], [])]
 
