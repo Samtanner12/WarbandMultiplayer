@@ -13,6 +13,7 @@ CONFIRMED=6017
 COHORT_BASE=17000
 COOLDOWN_SLOT=6040          # party slot: application time (ms) before which no new battle starts
 BATTLE_COOLDOWN_MS=3000
+SAVE_MIN_SIMPLE_TRIGGERS=151 # existing test saves hold this many; a save will not load with fewer
 
 def participant_loops(ops):
     out=[]
@@ -374,8 +375,10 @@ def install_triggers(triggers):
     triggers[:]=[t for t in triggers if not any(isinstance(op,tuple) and op[:2]==(eq,'$g_encounter_cycle_requested') for op in t[1])]
     # Battles run inside the campaign host on the same connection; the old
     # dedicated battle-server chooser (B) and its reconnect are dead paths.
+    # Saves store one record per simple trigger and refuse to load when the
+    # module has fewer, so retired triggers stay as inert placeholders.
     legacy=[(eq,'$g_coop_battle_available',1),(eq,'$g_coop_battle_connect_pending',1)]
-    triggers[:]=[t for t in triggers if not any(isinstance(op,tuple) and op in legacy for op in t[1])]
+    triggers[:]=[(t[0],[(eq,1,0)]) if any(isinstance(op,tuple) and op in legacy for op in t[1]) else t for t in triggers]
     for i,(delay,ops) in enumerate(triggers):
         if any(isinstance(op,tuple) and op[:2]==(eq,'$g_cycle_map_restore') for op in ops):
             ops[:]=[(gt,op[1],0) if isinstance(op,tuple) and op[0]==ge and op[1] in ['$g_cycle_return_party_a','$g_cycle_return_party_b'] else op for op in ops]
@@ -414,6 +417,7 @@ def install_triggers(triggers):
         (try_end),
     ]))
     triggers += player_context.client_triggers()
+    while len(triggers)<SAVE_MIN_SIMPLE_TRIGGERS:triggers.append((24,[(eq,1,0)]))
 
 def install_menus(menus):
     menus.append(('coop_retained_join',0,'{s10}','none',[
