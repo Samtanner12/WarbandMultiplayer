@@ -4,6 +4,7 @@ from header_common import *
 from header_operations import *
 from header_triggers import *
 from header_mission_templates import *
+from header_presentations import prsntf_read_only
 from module_constants import *
 
 PARTICIPANT=6015
@@ -88,13 +89,21 @@ def install_scripts(scripts):
     ])
     replace_script(scripts,'coop_retained_start',[
         (store_script_param,':requester',1),(store_script_param,':target',2),(store_script_param,':siege',3),
-        (assign,reg0,0),(player_is_active,':requester'),
+        (assign,reg0,0),(assign,'$g_retained_reject_reason',1),
+        (player_is_active,':requester'),
         (player_slot_eq,':requester',slot_player_coop_char_state,coop_char_state_ready),
+        (assign,'$g_retained_reject_reason',2),
+        # A finished battle whose flag outlived the scene cleanup.
+        (try_begin),(eq,'$g_native_probe_started',1),(eq,'$g_cycle_result_sent',1),(eq,'$g_full_host_probe_request',3),
+            (assign,'$g_native_probe_started',0),(try_end),
         (eq,'$g_native_probe_started',0),(eq,'$g_full_host_probe_request',3),
+        (assign,'$g_retained_reject_reason',3),
         (player_get_party_id,':party',':requester'),(party_is_active,':party'),
         (gt,':target',0),(party_is_active,':target'),(neq,':party',':target'),
-        (party_slot_eq,':party',slot_party_coop_battle_slot,0),
-        (party_slot_eq,':target',slot_party_coop_battle_slot,0),
+        # No battle runs now, so a reservation left on either army is stale.
+        (party_set_slot,':party',slot_party_coop_battle_slot,0),
+        (party_set_slot,':target',slot_party_coop_battle_slot,0),
+        (assign,'$g_retained_reject_reason',4),
         (assign,':defender',-1),
         (try_for_players,':candidate',1),(player_is_active,':candidate'),
             (player_slot_eq,':candidate',slot_player_coop_char_state,coop_char_state_ready),
@@ -133,16 +142,37 @@ def install_scripts(scripts):
         (store_script_param,':player',1),(player_get_party_id,':party',':player'),
         (party_get_battle_opponent,':opponent',':party'),
         (call_script,'script_coop_retained_start',':player',':opponent',0),
-        (try_begin),(eq,reg0,0),(multiplayer_send_2_int_to_player,':player',multiplayer_event_multiplayer_campaign_server_events,
-            multiplayer_event_multiplayer_campaign_server_event_battle_rejected,2),(try_end),
+        (try_begin),(eq,reg0,0),(store_add,':reason','$g_retained_reject_reason',10),
+            (multiplayer_send_2_int_to_player,':player',multiplayer_event_multiplayer_campaign_server_events,
+            multiplayer_event_multiplayer_campaign_server_event_battle_rejected,':reason'),(try_end),
     ])
     for name in ['coop_ev_cli_request_siege','coop_ev_cli_request_siege_local']:
         replace_script(scripts,name,[
             (store_script_param,':player',1),(store_script_param,':center',2),
             (call_script,'script_coop_retained_start',':player',':center',1),
-            (try_begin),(eq,reg0,0),(multiplayer_send_2_int_to_player,':player',multiplayer_event_multiplayer_campaign_server_events,
-                multiplayer_event_multiplayer_campaign_server_event_battle_rejected,2),(try_end),
+            (try_begin),(eq,reg0,0),(store_add,':reason','$g_retained_reject_reason',10),
+                (multiplayer_send_2_int_to_player,':player',multiplayer_event_multiplayer_campaign_server_events,
+                multiplayer_event_multiplayer_campaign_server_event_battle_rejected,':reason'),(try_end),
         ])
+    replace_script(scripts,'coop_retained_reject_message',[
+        (store_script_param,':reason',1),
+        (try_begin),(eq,':reason',11),
+            (display_message,'@Your character is still loading. Try again in a moment.',0xFFFF4444),
+        (else_try),(eq,':reason',12),
+            (display_message,'@The previous battle is still finishing on the server. Try again in a moment.',0xFFFF4444),
+        (else_try),(eq,':reason',13),
+            (display_message,'@There is no enemy engaged with your army to fight.',0xFFFF4444),
+        (else_try),(eq,':reason',14),
+            (display_message,'@You can only assault a hostile walled settlement you are standing next to.',0xFFFF4444),
+        (else_try),
+            (display_message,'@The battle could not be started.',0xFFFF4444),
+        (try_end),
+    ])
+    for name,ops in scripts:
+        if name!='multiplayer_campaign_server_events':continue
+        for i,op in enumerate(ops):
+            if isinstance(op,tuple) and op[0]==display_message and op[1]=='@All battle servers are busy -- try again shortly.':
+                ops[i]=(call_script,'script_coop_retained_reject_message',':reject_reason')
     replace_script(scripts,'coop_retained_reinforce',[
         (store_script_param,':player',1),(store_script_param,':team',2),(assign,reg0,0),
         (player_is_active,':player'),(player_slot_eq,':player',slot_player_coop_char_state,coop_char_state_ready),
@@ -450,38 +480,71 @@ def install_menus(menus):
     from module_retained_rewards import menus as reward_menus
     reward_menus(menus)
 
+def friendly_banners():
+    # Native-style label banner above every friendly soldier, in its owner's
+    # heraldry. One plain mesh overlay per labelled agent, created on demand;
+    # agent slot 6197 holds the presentation generation, 6198 the overlay+1.
+    size,on_foot,mounted=50,2100,2900
+    return ('coop_friendly_overhead',prsntf_read_only,0,[
+        (ti_on_presentation_load,[
+            (presentation_set_duration,999999),
+            (val_add,'$g_retained_banner_generation',1),(assign,'$g_retained_banner_count',0),
+        ]),
+        (ti_on_presentation_run,[
+            (set_fixed_point_multiplier,1000),
+            (multiplayer_get_my_player,':player'),
+            (try_begin),(this_or_next|lt,':player',0),(ge,'$g_full_probe_remote_request',5),
+                (presentation_set_duration,0),
+            (else_try),
+                (player_get_agent_id,':controlled',':player'),
+                (player_get_team_no,':team',':player'),
+                (try_begin),(ge,':controlled',0),(agent_get_team,':team',':controlled'),(try_end),
+                (try_for_agents,':agent'),
+                    (agent_slot_eq,':agent',6197,'$g_retained_banner_generation'),
+                    (agent_get_slot,':overlay',':agent',6198),(val_sub,':overlay',1),
+                    (overlay_set_alpha,':overlay',0),
+                (try_end),
+                (mission_cam_get_position,pos20),
+                (try_for_agents,':agent'),
+                    (agent_is_human,':agent'),(agent_is_alive,':agent'),(neq,':agent',':controlled'),
+                    (agent_get_team,':agent_team',':agent'),(eq,':agent_team',':team'),
+                    (agent_get_position,pos21,':agent'),
+                    (get_distance_between_positions,':distance',pos20,pos21),(le,':distance',100000),
+                    (assign,':height',on_foot),
+                    (try_begin),(agent_get_horse,':horse',':agent'),(ge,':horse',0),(assign,':height',mounted),(try_end),
+                    (position_move_z,pos21,':height'),
+                    (neg|position_is_behind_position,pos20,pos21),
+                    (position_get_screen_projection,pos22,pos21),
+                    (position_get_x,':x',pos22),(position_get_y,':y',pos22),
+                    (is_between,':x',0,1000),(is_between,':y',0,750),
+                    (try_begin),(neg|agent_slot_eq,':agent',6197,'$g_retained_banner_generation'),
+                        (lt,'$g_retained_banner_count',400),
+                        (assign,':mesh','mesh_arms_a01'),
+                        (agent_get_group,':owner',':agent'),
+                        (try_begin),(ge,':owner',1),(player_is_active,':owner'),
+                            (player_get_banner_id,':banner',':owner'),(ge,':banner',0),
+                            (store_add,':candidate',':banner',arms_meshes_begin),
+                            (is_between,':candidate',arms_meshes_begin,arms_meshes_end_minus_one),
+                            (assign,':mesh',':candidate'),
+                        (try_end),
+                        (create_mesh_overlay,':created',':mesh'),
+                        (init_position,pos19),(position_set_x,pos19,size),(position_set_y,pos19,size),
+                        (overlay_set_size,':created',pos19),(overlay_set_alpha,':created',0),
+                        (val_add,':created',1),(agent_set_slot,':agent',6198,':created'),
+                        (agent_set_slot,':agent',6197,'$g_retained_banner_generation'),
+                        (val_add,'$g_retained_banner_count',1),
+                    (try_end),
+                    (agent_slot_eq,':agent',6197,'$g_retained_banner_generation'),
+                    (agent_get_slot,':overlay',':agent',6198),(val_sub,':overlay',1),
+                    (overlay_set_position,':overlay',pos22),(overlay_set_alpha,':overlay',220),
+                (try_end),
+            (try_end),
+        ]),
+    ])
+
 def install_presentations(presentations):
-    for presentation in presentations:
-        if presentation[0]!='coop_friendly_overhead':continue
-        for _,ops in presentation[3]:
-            for i,op in enumerate(ops):
-                if isinstance(op,tuple) and op[0]==create_mesh_overlay:
-                    ops[i]=(create_mesh_overlay_with_tableau_material,op[1],'mesh_troop_label_banner','tableau_game_troop_label_banner',op[2])
-                if isinstance(op,tuple) and op[0] in [position_set_x,position_set_y] and op[1]==pos20 and op[2]==120:
-                    ops[i]=(op[0],pos20,18)
-            # Native draws troop label banners just above the head, mounted or
-            # not. Bone positions are only current for nearby rendered agents.
-            for i,op in enumerate(ops):
-                if isinstance(op,tuple) and op[:3]==(position_move_z,pos21,2300):
-                    ops[i:i+1]=[(assign,':label_height',2100),
-                        (try_begin),(agent_get_horse,':label_horse',':agent'),(ge,':label_horse',0),
-                            (assign,':label_height',2900),(try_end),
-                        (position_move_z,pos21,':label_height')]
-                    break
-            for i,op in enumerate(ops):
-                if isinstance(op,tuple) and op[:2]==(player_get_team_no,':team'):
-                    # Takeover can change controller state before the next
-                    # replicated player team arrives. Use the controlled agent.
-                    ops[i:i+1]=[op,(player_get_agent_id,':controller',':player'),
-                        (try_begin),(ge,':controller',0),(agent_get_team,':team',':controller'),(try_end)]
-                    break
-            for i,op in enumerate(ops):
-                if isinstance(op,tuple) and op[0]==agent_is_human:
-                    ops[i:i]=[(agent_slot_eq,op[1],6199,1)]
-                    break
-            ops[:]=[(multiplayer_get_my_player,':valid_player'),(try_begin),
-                (ge,':valid_player',0),(player_is_active,':valid_player')]+ops+[
-                (else_try),(presentation_set_duration,0),(try_end)]
+    for index,presentation in enumerate(presentations):
+        if presentation[0]=='coop_friendly_overhead':presentations[index]=friendly_banners()
 
 def install_native_scripts(scripts):
     # The map's Camp button starts an encounter with p_camp_bandits; Native

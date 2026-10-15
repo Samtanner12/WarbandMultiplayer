@@ -1624,3 +1624,6 @@ g_retained_loot_merchant
 g_retained_prisoner_open
 g_retained_battle_serial
 g_retained_debrief_done
+g_retained_banner_generation
+g_retained_banner_count
+g_retained_reject_reason
