@@ -514,12 +514,14 @@ def install_native_scripts(scripts):
                 # cannot be engaged again until it expires. Settlements are exempt.
                 (store_script_param,':cool_party',3),(gt,':cool_party',0),(party_is_active,':cool_party'),
                 (neg|is_between,':camp_encountered',centers_begin,centers_end),
-                (store_application_time,':cool_now'),(assign,':cooling',0),
+                # Stamps are application time, which restarts with the game while the stamps are
+                # saved with the world: only a stamp at most one cooldown ahead is a live cooldown.
+                (store_application_time,':cool_now'),(store_add,':cool_limit',':cool_now',BATTLE_COOLDOWN_MS),(assign,':cooling',0),
                 (try_begin),(party_get_slot,':cool_until',':cool_party',COOLDOWN_SLOT),
-                    (gt,':cool_until',':cool_now'),(assign,':cooling',1),(try_end),
+                    (gt,':cool_until',':cool_now'),(le,':cool_until',':cool_limit'),(assign,':cooling',1),(try_end),
                 (try_begin),(gt,':camp_encountered',0),(party_is_active,':camp_encountered'),
                     (party_get_slot,':cool_until',':camp_encountered',COOLDOWN_SLOT),
-                    (gt,':cool_until',':cool_now'),(assign,':cooling',1),(try_end),
+                    (gt,':cool_until',':cool_now'),(le,':cool_until',':cool_limit'),(assign,':cooling',1),(try_end),
                 (eq,':cooling',1),
                 (party_leave_cur_battle,':cool_party'),
                 (try_begin),(gt,':camp_encountered',0),(party_is_active,':camp_encountered'),
@@ -712,7 +714,7 @@ def install_missions(missions):
                     # A joining player's army that never loads in stops holding the battle open.
                     (else_try),(player_is_active,':pending_owner'),
                         (party_get_slot,':joined_at',':party',JOIN_TIME_SLOT),(store_application_time,':now'),
-                        (store_sub,':waited',':now',':joined_at'),(lt,':waited',JOIN_LOAD_TIMEOUT_MS),(assign,':pending',1),(try_end),
+                        (store_sub,':waited',':now',':joined_at'),(is_between,':waited',0,JOIN_LOAD_TIMEOUT_MS),(assign,':pending',1),(try_end),
                 (try_end),
                 (eq,':pending',0),
                 # Routed soldiers no longer hold the field, as in Native.
