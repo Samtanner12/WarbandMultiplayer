@@ -1646,3 +1646,6 @@ g_ctx_depth
 g_ctx_dialog
 g_ctx_repeat_object
 g_ctx_talk_troop
+g_menu_trace
+g_menu_trace_ready
+g_menu_trace_count

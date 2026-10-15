@@ -4,6 +4,7 @@ from header_common import *
 from header_operations import *
 from header_triggers import *
 from header_mission_templates import *
+from header_terrain_types import rt_water, rt_mountain
 from module_constants import *
 import module_player_context as player_context
 
@@ -268,13 +269,34 @@ def install_scripts(scripts):
             (call_script,'script_coop_retained_send_map_party',':recipient',':party',0),
         (try_end),
     ])
+    # A player army off the walkable map (sea, mountains, or a pocket only F8
+    # can name) is moved beside the nearest town, castle or village.
+    replace_script(scripts,'coop_retained_relocate_party',[
+        (store_script_param,':party',1),(store_script_param,':force',2),
+        (gt,':party',0),(party_is_active,':party'),
+        (party_get_current_terrain,':terrain',':party'),
+        (this_or_next|eq,':force',1),(this_or_next|eq,':terrain',rt_water),(eq,':terrain',rt_mountain),
+        (assign,':nearest',-1),(assign,':best',1000000),
+        (try_for_range,':center',centers_begin,centers_end),(party_is_active,':center'),
+            (store_distance_to_party_from_party,':distance',':party',':center'),(lt,':distance',':best'),
+            (assign,':best',':distance'),(assign,':nearest',':center'),
+        (try_end),
+        (ge,':nearest',0),
+        (party_relocate_near_party,':party',':nearest',2),
+        (try_for_players,':recipient',1),(player_is_active,':recipient'),
+            (player_slot_eq,':recipient',slot_player_coop_char_state,coop_char_state_ready),
+            (call_script,'script_coop_retained_send_map_party',':recipient',':party',0),
+        (try_end),
+    ])
     for name,ops in scripts:
         if name=='coop_recover_player_encounter':
             ops[0:0]=[(store_script_param,':unstick_player',1),(player_get_party_id,':unstick_party',':unstick_player'),
-                (call_script,'script_coop_retained_unstick_party',':unstick_party')]
+                (call_script,'script_coop_retained_unstick_party',':unstick_party'),
+                (call_script,'script_coop_retained_relocate_party',':unstick_party',1)]
         if name=='coop_player_hydrate':
             ops.extend([(store_script_param,':unstick_player',1),(player_get_party_id,':unstick_party',':unstick_player'),
-                (call_script,'script_coop_retained_unstick_party',':unstick_party')])
+                (call_script,'script_coop_retained_unstick_party',':unstick_party'),
+                (call_script,'script_coop_retained_relocate_party',':unstick_party',0)])
     # Native kill experience for human-led armies (Native SP awards it per kill).
     replace_script(scripts,'coop_retained_kill_xp',[
         (store_script_param,':dead',1),(store_script_param,':killer',2),

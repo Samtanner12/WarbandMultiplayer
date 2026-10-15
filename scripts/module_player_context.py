@@ -262,7 +262,7 @@ def install_native(scripts):
                       ('coop_menu_choose_' + name, choose_script(menus[name]))]
     generated += [('coop_menu_present', present_script()), ('coop_menu_choose', choose_dispatch()),
                   ('coop_ctx_start_encounter', start_encounter_script())] + session_scripts() + battle_scripts()
-    generated += dialog_scripts(dialogs)
+    generated += dialog_scripts(dialogs) + [TRACE_SCRIPT]
     scripts += generated
 
     for name, ops in scripts:
@@ -324,17 +324,26 @@ def present_script():
         (try_for_range, ':step', 0, 8), (ge, '$g_ctx_menu_next', 0), (eq, '$g_ctx_menu_battle', 0),
             (eq, '$g_ctx_menu_screen', 0),
             (assign, ':menu', '$g_ctx_menu_next'), (assign, '$g_ctx_menu_next', -1),
+            (player_get_slot, ':previous', ':player', MENU_SLOT),
             (player_set_slot, ':player', MENU_SLOT, ':menu'), (assign, ':handled', 0)]
     for name in MIRRORED_MENUS:
         ops += [(try_begin), (eq, ':menu', 'mnu_' + name),
                 (call_script, 'script_coop_menu_show_' + name, ':player'), (assign, ':handled', 1), (try_end)]
-    ops += [(try_begin), (eq, '$g_ctx_dialog', 1), (assign, '$g_ctx_dialog', 0),
+    ops += [(assign, reg56, ':menu')] + debug('showing menu {reg56}') + [
+            (try_begin), (eq, '$g_ctx_dialog', 1), (assign, '$g_ctx_dialog', 0),
                 (call_script, 'script_coop_dlg_advance', ':player', DLG_START),
             (try_end),
-            (try_begin), (eq, ':handled', 0), (assign, '$g_ctx_menu_close', 1),
-                (str_store_string, s49, '@That part of the Native campaign is not available in multiplayer yet.'),
+            (try_begin), (eq, ':handled', 0),
+                (assign, reg56, ':menu'),
+                (str_store_string, s49, '@That part of the Native campaign (menu {reg56}) is not available in multiplayer yet.'),
                 (call_script, 'script_coop_ctx_send_message'),
-                (call_script, 'script_coop_retained_release_encounter', CTX_PARTY),
+                (try_begin), (gt, ':previous', 0), (neq, ':previous', ':menu'),
+                    # Back to the menu the player came from (Attack and Leave stay available).
+                    (player_set_slot, ':player', MENU_SLOT, ':previous'), (assign, '$g_ctx_menu_next', ':previous'),
+                (else_try),
+                    (assign, '$g_ctx_menu_close', 1),
+                    (call_script, 'script_coop_retained_release_encounter', CTX_PARTY),
+                (try_end),
             (try_end),
         (try_end),
         (assign, reg56, ':player'), (player_get_slot, reg57, ':player', MENU_SLOT), (assign, reg58, '$g_ctx_menu_battle'),
@@ -367,7 +376,15 @@ def commit_ops():
 MENU_DEBUG = True   # host-side [menu] trace while the mirror is being brought up
 
 def debug(text):
-    return [(display_message, '@[menu] ' + text, 0xFFFFAA00)] if MENU_DEBUG else []
+    # Shown on the host and kept in WSE's "coop menu trace" ini file.
+    return [(str_store_string, s44, '@[menu] ' + text), (call_script, 'script_coop_menu_trace')] if MENU_DEBUG else []
+
+TRACE_SCRIPT = ('coop_menu_trace', [
+    (display_message, s44, 0xFFFFAA00),
+    (try_begin), (eq, '$g_menu_trace_ready', 0), (dict_create, '$g_menu_trace'), (assign, '$g_menu_trace_ready', 1), (try_end),
+    (val_add, '$g_menu_trace_count', 1), (assign, reg44, '$g_menu_trace_count'),
+    (dict_set_str, '$g_menu_trace', '@{reg44}', s44),
+    (dict_save, '$g_menu_trace', '@coop menu trace', 1)])
 
 def choose_dispatch():
     ops = [(store_script_param, ':player', 1), (store_script_param, ':option', 2),
@@ -873,7 +890,10 @@ def dialog_scripts(entries):
         (try_for_range, ':step', 0, 16), (eq, ':waiting', 0), (eq, ':ended', 0),
             (try_begin), (eq, ':state', DLG_CLOSE), (assign, ':ended', 1),
             (else_try),
-                (call_script, 'script_coop_dlg_state', 0, ':state', 0),
+                (assign, reg56, ':state'), (call_script, 'script_coop_dlg_state', 0, ':state', 0),
+                (assign, reg57, reg0), (assign, reg58, reg1), (assign, reg59, reg2)] + debug(
+                'dialog state {reg56}: line {reg57}, next state {reg58}, hidden {reg59}') + [
+                (assign, reg0, reg57), (assign, reg1, reg58), (assign, reg2, reg59),
                 (try_begin), (lt, reg0, 0), (assign, ':ended', 1),
                 (else_try),
                     (assign, ':state', reg1),
@@ -912,6 +932,8 @@ def dialog_scripts(entries):
             (player_get_slot, ':state', ':player', DLG_STATE_SLOT),
             (call_script, 'script_coop_dlg_state', 2, ':state', ':entry'), (assign, ':next', reg1),
         (try_end),
+        (assign, reg56, ':row'), (assign, reg57, ':entry'), (assign, reg58, ':next'), (assign, reg59, '$g_ctx_menu_next'),
+        (assign, reg60, '$g_ctx_menu_close')] + debug('dialog answer {reg56}: entry {reg57}, next state {reg58}, menu {reg59}, close {reg60}') + [
         (call_script, 'script_coop_dlg_advance', ':player', ':next')]
     return generated + [('coop_dlg_state', dispatch), ('coop_dlg_advance', advance), ('coop_dlg_choose', choose),
         ('coop_ctx_party_meeting', [(store_script_param, ':party', 1),
