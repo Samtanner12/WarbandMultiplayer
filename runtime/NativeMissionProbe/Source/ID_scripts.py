@@ -898,14 +898,16 @@ script_coop_retained_reinforce = 896
 script_coop_retained_release_bystanders = 897
 script_coop_retained_resume_ai = 898
 script_coop_retained_defeated_ai = 899
-script_coop_retained_unstick_party = 900
-script_coop_retained_kill_xp = 901
-script_coop_retained_battle_xp = 902
-script_coop_retained_prepare_rewards = 903
-script_coop_retained_send_spoils = 904
-script_coop_retained_take_prisoners = 905
-script_coop_retained_release_prisoners = 906
-script_coop_retained_open_prisoners = 907
-script_coop_retained_prisoner_diff = 908
+script_coop_retained_set_cooldown = 900
+script_coop_retained_release_encounter = 901
+script_coop_retained_unstick_party = 902
+script_coop_retained_kill_xp = 903
+script_coop_retained_battle_xp = 904
+script_coop_retained_prepare_rewards = 905
+script_coop_retained_send_spoils = 906
+script_coop_retained_take_prisoners = 907
+script_coop_retained_release_prisoners = 908
+script_coop_retained_open_prisoners = 909
+script_coop_retained_prisoner_diff = 910
 
 

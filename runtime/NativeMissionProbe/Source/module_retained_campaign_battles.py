@@ -10,6 +10,8 @@ PARTICIPANT=6015
 ROSTER_SPAWNED=6016
 CONFIRMED=6017
 COHORT_BASE=17000
+COOLDOWN_SLOT=6040          # party slot: application time (ms) before which no new battle starts
+BATTLE_COOLDOWN_MS=3000
 
 def participant_loops(ops):
     out=[]
@@ -143,7 +145,9 @@ def install_scripts(scripts):
         (call_script,'script_coop_retained_start',':player',':opponent',0),
         (try_begin),(eq,reg0,0),(store_add,':reason','$g_retained_reject_reason',10),
             (multiplayer_send_2_int_to_player,':player',multiplayer_event_multiplayer_campaign_server_events,
-            multiplayer_event_multiplayer_campaign_server_event_battle_rejected,':reason'),(try_end),
+            multiplayer_event_multiplayer_campaign_server_event_battle_rejected,':reason'),
+            (call_script,'script_coop_retained_release_encounter',':party'),
+        (try_end),
     ])
     for name in ['coop_ev_cli_request_siege','coop_ev_cli_request_siege_local']:
         replace_script(scripts,name,[
@@ -237,6 +241,33 @@ def install_scripts(scripts):
         (try_begin),(gt,':party','p_spawn_points_end'),(remove_party,':party'),
         (else_try),(disable_party,':party'),(try_end),
     ])
+    # Armies just out of an encounter or battle cannot start another for 3 s.
+    replace_script(scripts,'coop_retained_set_cooldown',[
+        (store_script_param,':party',1),(gt,':party',0),(party_is_active,':party'),
+        (store_application_time,':until'),(val_add,':until',BATTLE_COOLDOWN_MS),
+        (party_set_slot,':party',COOLDOWN_SLOT,':until'),
+    ])
+    # Ending an encounter without a battle (leave, ransom, refused start)
+    # frees both armies, not only the player's, as Native's leave_encounter.
+    replace_script(scripts,'coop_retained_release_encounter',[
+        (store_script_param,':party',1),(gt,':party',0),(party_is_active,':party'),
+        (party_get_battle_opponent,':opponent',':party'),
+        (party_leave_cur_battle,':party'),
+        (call_script,'script_coop_retained_set_cooldown',':party'),
+        (try_for_players,':recipient',1),(player_is_active,':recipient'),
+            (player_slot_eq,':recipient',slot_player_coop_char_state,coop_char_state_ready),
+            (call_script,'script_coop_retained_send_map_party',':recipient',':party',0),
+        (try_end),
+        (gt,':opponent',0),(party_is_active,':opponent'),
+        (party_slot_eq,':opponent',slot_party_coop_battle_slot,0),
+        (party_leave_cur_battle,':opponent'),
+        (call_script,'script_coop_retained_set_cooldown',':opponent'),
+        (call_script,'script_coop_retained_resume_ai',':opponent'),
+        (try_for_players,':recipient',1),(player_is_active,':recipient'),
+            (player_slot_eq,':recipient',slot_player_coop_char_state,coop_char_state_ready),
+            (call_script,'script_coop_retained_send_map_party',':recipient',':opponent',0),
+        (try_end),
+    ])
     # A player's army keeps no battle state outside a running battle. Clears
     # leftovers from interrupted battles (crash, disconnect, failed launch).
     replace_script(scripts,'coop_retained_unstick_party',[
@@ -300,6 +331,12 @@ def install_scripts(scripts):
                 (try_begin),(eq,':event_type',50),(store_script_param,':join_side',3),
                 (call_script,'script_coop_retained_reinforce',':player_no',':join_side'),
                 (eq,reg0,0),(multiplayer_send_int_to_player,':player_no',multiplayer_event_multiplayer_campaign_server_events,88),
+                (try_end),
+                # Leaving (or ransoming) an encounter releases both armies;
+                # the legacy handler below still runs and only frees the player.
+                (try_begin),(eq,':event_type',multiplayer_event_multiplayer_campaign_leave_encounter),
+                    (player_get_party_id,':leaving_party',':player_no'),
+                    (call_script,'script_coop_retained_release_encounter',':leaving_party'),
                 (try_end),
                 (neq,':event_type',50)]+out
             ops[:]=out
@@ -501,6 +538,23 @@ def install_native_scripts(scripts):
                     (call_script,'script_coop_client_request_menu','mnu_camp'),
                 (try_end),
                 (leave_encounter),
+            (else_try),(multiplayer_is_campaign),(multiplayer_is_server),
+                # Battle cooldown: armies just out of a battle or encounter
+                # cannot be engaged again until it expires. Settlements are exempt.
+                (store_script_param,':cool_party',3),(gt,':cool_party',0),(party_is_active,':cool_party'),
+                (neg|is_between,':camp_encountered',centers_begin,centers_end),
+                (store_application_time,':cool_now'),(assign,':cooling',0),
+                (try_begin),(party_get_slot,':cool_until',':cool_party',COOLDOWN_SLOT),
+                    (gt,':cool_until',':cool_now'),(assign,':cooling',1),(try_end),
+                (try_begin),(gt,':camp_encountered',0),(party_is_active,':camp_encountered'),
+                    (party_get_slot,':cool_until',':camp_encountered',COOLDOWN_SLOT),
+                    (gt,':cool_until',':cool_now'),(assign,':cooling',1),(try_end),
+                (eq,':cooling',1),
+                (party_leave_cur_battle,':cool_party'),
+                (try_begin),(gt,':camp_encountered',0),(party_is_active,':camp_encountered'),
+                    (party_slot_eq,':camp_encountered',slot_party_coop_battle_slot,0),
+                    (party_leave_cur_battle,':camp_encountered'),(try_end),
+                (leave_encounter),
             (else_try)]+ops+[(try_end)]
     # Campaign factions are not the fixed multiplayer culture IDs expected
     # by Native's shield and marker helper. Use the owning player's banner
@@ -676,6 +730,7 @@ def install_missions(missions):
                         (party_remove_members,':party',':troop',':killed'),(party_wound_members,':party',':troop',':wounds'),
                     (try_end),
                     (party_leave_cur_battle,':party'),(enable_party,':party'),(party_set_slot,':party',slot_party_coop_battle_slot,0),
+                    (call_script,'script_coop_retained_set_cooldown',':party'),
                     (try_for_players,':recipient',1),(player_is_active,':recipient'),
                         (player_slot_eq,':recipient',slot_player_coop_char_state,coop_char_state_ready),
                         (call_script,'script_coop_retained_send_map_party',':recipient',':party',0),
