@@ -124,6 +124,13 @@ class AfterBattle(unittest.TestCase):
         for name in ['coop_menu_choose','coop_ctx_after_battle','coop_ctx_post_battle','coop_ctx_start_encounter']:
             ops=built[name];i=[n for n,o in enumerate(ops) if isinstance(o,tuple) and o[:2]==(call_script,'script_coop_ctx_enter')][0]
             self.assertEqual(ops[i+1],try_begin,name)
+    def test_casualties_read_from_armies_disabled_for_the_battle(self):
+        # The host disables both armies for the whole battle; party_is_active fails for them.
+        self.assertFalse(any(isinstance(o,tuple) and o[0]==party_is_active for o in built['coop_ctx_after_battle']))
+        self.assertFalse(any(isinstance(o,tuple) and o[0]==party_is_active for o in built['coop_retained_kill_xp']))
+    def test_native_screens_open_from_the_map(self):
+        triggers=ctx.client_triggers()
+        self.assertTrue(any(op==(change_screen_loot,ctx.LOOT_TROOP) for t in triggers for op in t[1]))
     def test_beaten_army_is_reenabled_before_clearing(self):
         ops=built['coop_ctx_clear_party_group']
         self.assertTrue(any(isinstance(o,tuple) and o[0]==enable_party for o in ops))

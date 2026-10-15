@@ -402,7 +402,7 @@ def present_script():
             # Back on the map, as Native's map screen ends any encounter.
             (call_script, 'script_coop_retained_release_encounter', CTX_PARTY),
             # A beaten army Native's victory menu did not get to clear.
-            (try_begin), (gt, '$g_enemy_party', 0), (party_slot_eq, '$g_enemy_party', DEFEATED_SLOT, 1),
+            (try_begin), (gt, '$g_enemy_party', 0), (party_slot_ge, '$g_enemy_party', DEFEATED_SLOT, 1),
                 (call_script, 'script_coop_ctx_clear_party_group', '$g_enemy_party'),
             (try_end),
         (try_end)]
@@ -421,12 +421,16 @@ def debug(text):
     # Shown on the host and kept in WSE's "coop menu trace" ini file.
     return [(str_store_string, s44, '@[menu] ' + text), (call_script, 'script_coop_menu_trace')] if MENU_DEBUG else []
 
+# A dictionary handle kept in a global would be saved with the game and dangle
+# after a reload, so each line opens, appends to and frees the file.
 TRACE_SCRIPT = ('coop_menu_trace', [
     (display_message, s44, 0xFFFFAA00),
-    (try_begin), (eq, '$g_menu_trace_ready', 0), (dict_create, '$g_menu_trace'), (assign, '$g_menu_trace_ready', 1), (try_end),
+    (dict_create, ':trace'),
+    (try_begin), (dict_load_file, ':trace', '@coop menu trace', 0, 1), (try_end),
     (val_add, '$g_menu_trace_count', 1), (assign, reg44, '$g_menu_trace_count'),
-    (dict_set_str, '$g_menu_trace', '@{reg44}', s44),
-    (dict_save, '$g_menu_trace', '@coop menu trace', 1)])
+    (dict_set_str, ':trace', '@{reg44}', s44),
+    (dict_save, ':trace', '@coop menu trace', 1),
+    (dict_free, ':trace')])
 
 def choose_dispatch():
     ops = [(store_script_param, ':player', 1), (store_script_param, ':option', 2),
@@ -585,7 +589,7 @@ def session_scripts():
         (try_begin), (gt, ':party', 0),
             # The battle's end hides a beaten army (disable_party) for this menu to clear,
             # and party_is_active fails for a disabled party.
-            (try_begin), (party_slot_eq, ':party', DEFEATED_SLOT, 1), (party_set_slot, ':party', DEFEATED_SLOT, 0),
+            (try_begin), (party_slot_ge, ':party', DEFEATED_SLOT, 1), (party_set_slot, ':party', DEFEATED_SLOT, 0),
                 (enable_party, ':party'), (try_end),
             (party_is_active, ':party'),
             (neg|is_between, ':party', multiplayer_campaign_player_parties_begin, multiplayer_campaign_player_parties_end),
@@ -605,7 +609,8 @@ def battle_scripts():
     cohort = [(try_for_range, ':index', 0, '$g_retained_party_count'),
         (store_add, ':cohort_slot', 17000, ':index'),
         (party_get_slot, ':cohort', '$g_cycle_attacker_party', ':cohort_slot'),
-        (party_is_active, ':cohort'), (party_get_slot, ':cohort_team', ':cohort', 6015)]
+        # Armies are disabled on the host for the whole battle: party_is_active would skip them all.
+        (gt, ':cohort', 0), (party_get_slot, ':cohort_team', ':cohort', 6015)]
     return [
     # At admission: Native's encounter setup (backups, starting strengths).
     ('coop_ctx_before_battle', [(store_script_param, ':player', 1), (store_script_param, ':team', 2),
@@ -786,8 +791,8 @@ def client_server_events():
             (multiplayer_get_my_player, ':me'), (player_get_troop_id, ':hero', ':me'),
             (store_troop_gold, '$g_coop_trade_gold_before', ':hero'),
             (assign, '$g_retained_loot_merchant', LOOT_TROOP),
-            (assign, '$g_coop_trade_screen_open', 1), (assign, '$g_ctx_screen_open', 1),
-            (change_screen_loot, LOOT_TROOP),
+            # Opened from the map trigger below, not from the network handler.
+            (assign, '$g_ctx_screen_pending', 1),
         (else_try), (eq, ':retained_event', EV_PRISONER_OFFER),
             (store_script_param, ':index', 2), (store_script_param, ':troop', 3), (store_script_param, ':count', 4),
             (multiplayer_get_my_player, ':me'),
@@ -804,7 +809,7 @@ def client_server_events():
             (player_set_slot, ':me', ':slot', ':troop'), (val_add, ':slot', 1), (player_set_slot, ':me', ':slot', ':count'),
             (store_add, ':stacks', ':index', 1), (player_set_slot, ':me', COMPANION_COUNT_SLOT, ':stacks'),
         (else_try), (eq, ':retained_event', EV_OPEN_EXCHANGE),
-            (call_script, 'script_coop_ctx_client_open_exchange')]
+            (assign, '$g_ctx_screen_pending', 2)]
 
 def host_client_events():
     """Host handlers for client events, placed in the client-event prefix."""
@@ -1028,9 +1033,22 @@ def install_menus(menus):
               ('coop_menu_mirror_close', 0, ' ', 'none', [(change_screen_return)], [])]
 
 def client_triggers():
-    # A Native screen may return to the map instead of the mirror menu.
-    return [(0, [(neg|multiplayer_is_server), (multiplayer_is_campaign), (gt, '$g_ctx_screen_open', 0),
-                 (call_script, 'script_coop_ctx_client_screen_settle')])]
+    return [
+        # Native loot and party-exchange screens open from the map, like requested menus.
+        (0, [(neg|multiplayer_is_server), (multiplayer_is_campaign), (gt, '$g_ctx_screen_pending', 0),
+             (assign, ':screen', '$g_ctx_screen_pending'), (assign, '$g_ctx_screen_pending', 0),
+             (assign, '$g_ctx_screen_frames', 0),
+             (try_begin), (eq, ':screen', 1),
+                 (assign, '$g_coop_trade_screen_open', 1), (assign, '$g_ctx_screen_open', 1),
+                 (change_screen_loot, LOOT_TROOP),
+             (else_try),
+                 (call_script, 'script_coop_ctx_client_open_exchange'),
+             (try_end)]),
+        # Back on the map after a Native screen: report it closed. Map triggers do
+        # not run while the screen is up, so a few map frames means it has closed.
+        (0, [(neg|multiplayer_is_server), (multiplayer_is_campaign), (gt, '$g_ctx_screen_open', 0),
+             (val_add, '$g_ctx_screen_frames', 1), (ge, '$g_ctx_screen_frames', 3),
+             (call_script, 'script_coop_ctx_client_screen_settle')])]
 
 def write_report(closure, bank, world):
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'logs', 'player-context-report.txt')

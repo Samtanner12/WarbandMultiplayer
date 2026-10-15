@@ -1649,3 +1649,5 @@ g_ctx_talk_troop
 g_menu_trace
 g_menu_trace_ready
 g_menu_trace_count
+g_ctx_screen_pending
+g_ctx_screen_frames

@@ -14,6 +14,7 @@ CONFIRMED=6017
 COHORT_BASE=17000
 COOLDOWN_SLOT=6040          # party slot: application time (ms) before which no new battle starts
 BATTLE_COOLDOWN_MS=3000
+DEFEAT_CLEAR_HOURS=12        # game hours a beaten army waits for its victor's Native menus
 SAVE_MIN_SIMPLE_TRIGGERS=151 # existing test saves hold this many; a save will not load with fewer
 
 def participant_loops(ops):
@@ -253,7 +254,8 @@ def install_scripts(scripts):
     # A player's army keeps no battle state outside a running battle. Clears
     # leftovers from interrupted battles (crash, disconnect, failed launch).
     replace_script(scripts,'coop_retained_unstick_party',[
-        (store_script_param,':party',1),(gt,':party',0),(party_is_active,':party'),
+        # No party_is_active: a stuck army is often a disabled one.
+        (store_script_param,':party',1),(gt,':party',0),
         (assign,':held',0),
         (try_begin),(eq,'$g_native_probe_started',1),(eq,'$g_cycle_result_sent',0),
             (try_for_range,':i',0,'$g_retained_party_count'),
@@ -302,7 +304,7 @@ def install_scripts(scripts):
         (store_script_param,':dead',1),(store_script_param,':killer',2),
         (ge,':killer',0),(agent_is_human,':dead'),(agent_is_human,':killer'),
         (agent_get_team,':dead_team',':dead'),(agent_get_team,':killer_team',':killer'),(neq,':dead_team',':killer_team'),
-        (agent_get_slot,':party',':killer',6100),(gt,':party',0),(party_is_active,':party'),
+        (agent_get_slot,':party',':killer',6100),(gt,':party',0),
         (party_slot_ge,':party',6016,1),
         (agent_get_slot,':killer_troop',':killer',6101),(ge,':killer_troop',0),
         (agent_get_troop_id,':dead_troop',':dead'),(store_character_level,':level',':dead_troop'),
@@ -439,6 +441,12 @@ def install_triggers(triggers):
         (try_end),
     ]))
     triggers += player_context.client_triggers()
+    # A beaten army whose victor never reached Native's victory menu (left, disconnected).
+    triggers.append((1,[(multiplayer_is_server),(multiplayer_is_campaign),(store_current_hours,':now'),
+        (try_for_parties,':party'),(party_slot_ge,':party',player_context.DEFEATED_SLOT,1),
+            (party_get_slot,':deadline',':party',player_context.DEFEATED_SLOT),(lt,':deadline',':now'),
+            (call_script,'script_coop_ctx_clear_party_group',':party'),
+        (try_end)]))
     while len(triggers)<SAVE_MIN_SIMPLE_TRIGGERS:triggers.append((24,[(eq,1,0)]))
 
 def install_menus(menus):
@@ -719,7 +727,7 @@ def install_missions(missions):
                     (store_agent_hit_points,':health',':agent',0),(troop_set_health,':troop',':health'),(try_end),
                 (try_for_range,':index',0,'$g_retained_party_count'),
                     (store_add,':slot',COHORT_BASE,':index'),(party_get_slot,':party','$g_cycle_attacker_party',':slot'),
-                    (party_get_num_companion_stacks,':stacks',':party'),
+                    (party_get_num_companion_stacks,':stacks',':party'),(assign,':army_killed',0),(assign,':army_wounded',0),
                     (try_for_range_backwards,':stack',0,':stacks'),
                         (party_stack_get_troop_id,':troop',':party',':stack'),
                         (store_mul,':loss_slot',':troop',2),(val_add,':loss_slot',6200),(store_add,':wound_slot',':loss_slot',1),
@@ -727,7 +735,10 @@ def install_missions(missions):
                         (try_begin),(troop_is_hero,':troop'),(val_add,':wounds',':killed'),(assign,':killed',0),
                             (try_begin),(gt,':wounds',0),(troop_set_health,':troop',0),(try_end),(try_end),
                         (party_remove_members,':party',':troop',':killed'),(party_wound_members,':party',':troop',':wounds'),
+                        (val_add,':army_killed',':killed'),(val_add,':army_wounded',':wounds'),
                     (try_end),
+                    (assign,reg56,':party'),(party_get_num_companions,reg57,':party'),(assign,reg58,':army_killed'),(assign,reg59,':army_wounded'),
+                    ]+player_context.debug('army {reg56}: {reg57} troops after the battle ({reg58} killed, {reg59} wounded)')+[
                     (party_leave_cur_battle,':party'),(enable_party,':party'),(party_set_slot,':party',slot_party_coop_battle_slot,0),
                     (call_script,'script_coop_retained_set_cooldown',':party'),
                     (try_for_players,':recipient',1),(player_is_active,':recipient'),
@@ -741,7 +752,10 @@ def install_missions(missions):
                     (try_begin),(eq,':human_winner',1),(eq,':party',':losing_root'),
                         # Native total victory loots, takes prisoners, then clears it.
                         (party_is_non_player,':party'),(neg|is_between,':party',centers_begin,centers_end),
-                        (disable_party,':party'),(party_set_slot,':party',player_context.DEFEATED_SLOT,1),
+                        (disable_party,':party'),
+                        # Cleared by Native's victory menu, or after a few hours if nobody gets there.
+                        (store_current_hours,':defeat_deadline'),(val_add,':defeat_deadline',DEFEAT_CLEAR_HOURS),
+                        (party_set_slot,':party',player_context.DEFEATED_SLOT,':defeat_deadline'),
                         (try_for_players,':recipient',1),(player_is_active,':recipient'),
                             (player_slot_eq,':recipient',slot_player_coop_char_state,coop_char_state_ready),
                             (multiplayer_send_2_int_to_player,':recipient',multiplayer_event_multiplayer_campaign_server_events,79,':party'),
