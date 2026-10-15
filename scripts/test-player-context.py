@@ -117,6 +117,18 @@ class Conversations(unittest.TestCase):
         self.assertTrue(any(isinstance(op,tuple) and op[0]==party_get_template_id for op in start))
         self.assertFalse(any(isinstance(op,tuple) and op[0] in (store_conversation_troop,agent_play_sound,encounter_attack) for op in start))
 
+class AfterBattle(unittest.TestCase):
+    def test_context_exit_survives_a_failing_native_script(self):
+        ops=[(call_script,'script_coop_ctx_enter',':p'),(eq,1,0),(call_script,'script_coop_ctx_exit',':p')]
+        self.assertEqual(ctx.guard_contexts(ops),[ops[0],(try_begin),(eq,1,0),(try_end),ops[2]])
+        for name in ['coop_menu_choose','coop_ctx_after_battle','coop_ctx_post_battle','coop_ctx_start_encounter']:
+            ops=built[name];i=[n for n,o in enumerate(ops) if isinstance(o,tuple) and o[:2]==(call_script,'script_coop_ctx_enter')][0]
+            self.assertEqual(ops[i+1],try_begin,name)
+    def test_beaten_army_is_reenabled_before_clearing(self):
+        ops=built['coop_ctx_clear_party_group']
+        self.assertTrue(any(isinstance(o,tuple) and o[0]==enable_party for o in ops))
+        self.assertTrue(mentions(ops,ctx.DEFEATED_SLOT))
+
 class Nesting(unittest.TestCase):
     def test_context_suspends_and_resumes_the_outer_player(self):
         enter=built['coop_ctx_enter'];leave=built['coop_ctx_exit']

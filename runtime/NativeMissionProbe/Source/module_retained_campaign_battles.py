@@ -741,7 +741,7 @@ def install_missions(missions):
                     (try_begin),(eq,':human_winner',1),(eq,':party',':losing_root'),
                         # Native total victory loots, takes prisoners, then clears it.
                         (party_is_non_player,':party'),(neg|is_between,':party',centers_begin,centers_end),
-                        (disable_party,':party'),
+                        (disable_party,':party'),(party_set_slot,':party',player_context.DEFEATED_SLOT,1),
                         (try_for_players,':recipient',1),(player_is_active,':recipient'),
                             (player_slot_eq,':recipient',slot_player_coop_char_state,coop_char_state_ready),
                             (multiplayer_send_2_int_to_player,':recipient',multiplayer_event_multiplayer_campaign_server_events,79,':party'),

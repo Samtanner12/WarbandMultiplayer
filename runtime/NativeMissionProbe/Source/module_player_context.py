@@ -23,6 +23,7 @@ BANKED_PARTIES = ['p_main_party_backup', 'p_encountered_party_backup', 'p_collec
                   'p_total_enemy_casualties', 'p_player_casualties', 'p_enemy_casualties', 'p_ally_casualties',
                   'p_collective_enemy']
 PARTY_BANK_BASE, PARTY_STRIDE, PARTY_STACKS, PARTY_PRISONER_STACKS = 21000, 160, 32, 16
+DEFEATED_SLOT = 6041              # party slot: beaten army left for Native's victory menu to clear
 MENU_SLOT = 19398                 # player slot: Native menu the player is in
 POST_BATTLE_SLOT = 19397          # player slot: 1 while Native post-battle menus are due
 OPTION_MAP_BASE = 19300           # client player slots: mirror row -> Native option index
@@ -135,6 +136,33 @@ def called_scripts(ops):
 
 def globals_in(ops):
     return set(a for op in map(as_op, ops) if isinstance(op, tuple) for a in op[1:] if isinstance(a, str) and a.startswith('$'))
+
+BLOCK_OPEN = set(globals()[n] for n in ['try_begin', 'try_for_range', 'try_for_range_backwards', 'try_for_parties',
+    'try_for_agents', 'try_for_players', 'try_for_prop_instances', 'try_for_dict_keys'] if n in globals())
+
+def guard_contexts(ops):
+    """A Native script that fails between coop_ctx_enter and coop_ctx_exit would
+    skip the exit and leave the player's context open for everyone after. Wrap
+    the code between each pair so the exit always runs."""
+    out, i = [], 0
+    while i < len(ops):
+        op = ops[i]
+        out.append(op)
+        if isinstance(op, tuple) and op[0] == call_script and op[1] == 'script_coop_ctx_enter':
+            depth, j = 0, i + 1
+            while j < len(ops):
+                o = as_op(ops[j]); code = o[0] if isinstance(o, tuple) else None
+                if code in BLOCK_OPEN: depth += 1
+                elif code == try_end: depth -= 1
+                if depth < 0: break
+                if depth == 0 and code == call_script and o[1] == 'script_coop_ctx_exit': break
+                j += 1
+            if j < len(ops) and depth == 0:
+                out += [(try_begin)] + guard_contexts(ops[i + 1:j]) + [(try_end)]
+                i = j
+                continue
+        i += 1
+    return out
 
 def closure_op(op):
     """Native scripts reached from host-run menus and conversations. They also run
@@ -268,6 +296,7 @@ def install_native(scripts):
     generated += [('coop_menu_present', present_script()), ('coop_menu_choose', choose_dispatch()),
                   ('coop_ctx_start_encounter', start_encounter_script())] + session_scripts() + battle_scripts()
     generated += dialog_scripts(dialogs) + [TRACE_SCRIPT]
+    generated = [(name, guard_contexts(ops)) for name, ops in generated]
     scripts += generated
 
     for name, ops in scripts:
@@ -336,7 +365,9 @@ def present_script():
     for name in MIRRORED_MENUS:
         ops += [(try_begin), (eq, ':menu', 'mnu_' + name),
                 (call_script, 'script_coop_menu_show_' + name, ':player'), (assign, ':handled', 1), (try_end)]
-    ops += [(assign, reg56, ':menu')] + debug('showing menu {reg56}') + [
+    ops += [(assign, reg56, ':menu'), (party_get_num_companions, reg57, 'p_total_enemy_casualties'),
+            (party_get_num_companions, reg58, 'p_collective_enemy'), (assign, reg59, '$g_ctx_depth')] + debug(
+            'showing menu {reg56} (enemy casualties {reg57}, enemy left {reg58}, context depth {reg59})') + [
             (try_begin), (eq, '$g_ctx_dialog', 1), (assign, '$g_ctx_dialog', 0),
                 (call_script, 'script_coop_dlg_advance', ':player', DLG_START),
             (try_end),
@@ -370,6 +401,10 @@ def present_script():
             (multiplayer_send_int_to_player, ':player', SERVER, EV_MENU_CLOSE),
             # Back on the map, as Native's map screen ends any encounter.
             (call_script, 'script_coop_retained_release_encounter', CTX_PARTY),
+            # A beaten army Native's victory menu did not get to clear.
+            (try_begin), (gt, '$g_enemy_party', 0), (party_slot_eq, '$g_enemy_party', DEFEATED_SLOT, 1),
+                (call_script, 'script_coop_ctx_clear_party_group', '$g_enemy_party'),
+            (try_end),
         (try_end)]
     return ops
 
@@ -547,7 +582,12 @@ def session_scripts():
     # Native's clear_party_group, but a human army is never emptied: its
     # owner goes through Native's total defeat instead.
     ('coop_ctx_clear_party_group', [(store_script_param, ':party', 1),
-        (try_begin), (gt, ':party', 0), (party_is_active, ':party'),
+        (try_begin), (gt, ':party', 0),
+            # The battle's end hides a beaten army (disable_party) for this menu to clear,
+            # and party_is_active fails for a disabled party.
+            (try_begin), (party_slot_eq, ':party', DEFEATED_SLOT, 1), (party_set_slot, ':party', DEFEATED_SLOT, 0),
+                (enable_party, ':party'), (try_end),
+            (party_is_active, ':party'),
             (neg|is_between, ':party', multiplayer_campaign_player_parties_begin, multiplayer_campaign_player_parties_end),
             (neg|is_between, ':party', centers_begin, centers_end),
             (call_script, 'script_clear_party_group', ':party'),
@@ -620,6 +660,9 @@ def battle_scripts():
                 (try_end),
             (try_end),
             (player_set_slot, ':player', POST_BATTLE_SLOT, 1),
+            (assign, reg56, ':player'), (assign, reg57, '$g_battle_result'), (assign, reg58, '$g_ctx_depth'),
+            (party_get_num_companions, reg59, 'p_total_enemy_casualties'), (party_get_num_companions, reg60, 'p_player_casualties'),
+            ] + debug('after battle, player {reg56}: result {reg57}, context depth {reg58}, enemy casualties {reg59}, own casualties {reg60}') + [
             (call_script, 'script_coop_ctx_exit', ':player'),
         (try_end)]),
     # Back on the map: Native's debrief, then victory, defeat or retreat.
