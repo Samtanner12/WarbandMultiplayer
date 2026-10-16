@@ -783,10 +783,23 @@ def install_missions(missions):
                     (store_mul,':entry',':team',32),
                     (try_begin),(eq,'$g_retained_siege',1),(eq,':team',1),(assign,':entry',10),(try_end),
                     (set_fixed_point_multiplier,100),(entry_point_get_position,pos5,':entry'),
-                    (try_begin),(neq,':entry',0),(position_get_x,':entry_x',pos5),(position_get_y,':entry_y',pos5),
-                        (eq,':entry_x',0),(eq,':entry_y',0),
-                        # The map has no such entry point: face the first army across the field.
-                        (entry_point_get_position,pos5,0),(position_move_y,pos5,8000),(position_rotate_z,pos5,180),
+                    # Generated maps place their entry points far apart (over 400 m on the large
+                    # ones): as in a Native field battle, the second army stands about 110 m from
+                    # the first, on the line towards its own entry point and facing the same way.
+                    # A map without that entry point gets the first army's heading instead.
+                    (try_begin),(neq,':entry',0),
+                        (position_get_x,':entry_x',pos5),(position_get_y,':entry_y',pos5),
+                        (entry_point_get_position,pos6,0),(position_get_x,':first_x',pos6),(position_get_y,':first_y',pos6),
+                        (try_begin),(eq,':entry_x',0),(eq,':entry_y',0),
+                            (copy_position,pos5,pos6),(position_move_y,pos5,11000),(position_rotate_z,pos5,180),
+                        (else_try),(gt,'$g_retained_terrain_seed',0),
+                            (get_distance_between_positions,':span',pos5,pos6),(gt,':span',11000),
+                            (store_sub,':dx',':entry_x',':first_x'),(store_sub,':dy',':entry_y',':first_y'),
+                            (val_mul,':dx',110),(val_div,':dx',':span'),(val_mul,':dx',100),
+                            (val_mul,':dy',110),(val_div,':dy',':span'),(val_mul,':dy',100),
+                            (val_add,':dx',':first_x'),(val_add,':dy',':first_y'),
+                            (position_set_x,pos5,':dx'),(position_set_y,pos5,':dy'),
+                        (try_end),
                     (try_end),
                     (position_get_x,reg57,pos5),(position_get_y,reg58,pos5),(position_get_z,reg59,pos5),(assign,reg56,':party'),(assign,reg60,':entry'),
                     ]+player_context.debug('spawn: army {reg56} at entry {reg60}: {reg57}, {reg58}, height {reg59} cm')+[
@@ -826,6 +839,8 @@ def install_missions(missions):
                             (val_add,':spawned',1),
                         (try_end),
                     (try_end),
+                    (assign,reg56,':party'),(assign,reg57,':spawned'),
+                    ]+player_context.debug('spawn: army {reg56} put {reg57} soldiers on the field')+[
                     (try_begin),(ge,':owner',1),(player_is_active,':owner'),
                         (player_set_slot,':owner',6001,1),(team_give_order,':owner',grc_everyone,mordr_charge),
                     (try_end),
