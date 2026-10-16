@@ -740,9 +740,7 @@ def install_missions(missions):
                             (entry_point_get_position,pos4,':entry'),
                             (store_mod,':column',':spawned',10),(store_div,':row',':spawned',10),
                             (store_mul,':x',':column',150),(val_sub,':x',750),(store_mul,':y',':row',150),
-                            (position_move_x,pos4,':x'),(position_move_y,pos4,':y'),
-                            # Generated maps vary in height around the entry point.
-                            (position_set_z_to_ground_level,pos4),(set_spawn_position,pos4),
+                            (position_move_x,pos4,':x'),(position_move_y,pos4,':y'),(set_spawn_position,pos4),
                             (spawn_agent,':troop'),(assign,':agent',reg0),
                             (agent_set_team,':agent',':team'),(assign,':group',0),
                             (try_begin),(ge,':owner',1),(assign,':group',':owner'),(try_end),
