@@ -5,7 +5,7 @@ from header_operations import *
 from header_triggers import *
 from header_mission_templates import *
 from header_scenes import sf_generate, sf_auto_entry_points
-from header_terrain_types import rt_water, rt_mountain, rt_steppe, rt_steppe_forest, rt_snow, rt_snow_forest, rt_desert, rt_desert_forest
+from header_terrain_types import rt_water, rt_mountain, rt_steppe, rt_steppe_forest, rt_snow, rt_snow_forest, rt_desert, rt_desert_forest, rt_forest
 from module_constants import *
 import module_player_context as player_context
 
@@ -31,11 +31,32 @@ def apply_terrain_seeds(scene):
 def terrain_seed_ops():
     # Host: new seeds for a generated field map (-1 for siege scenes, which are fixed).
     return [(assign,'$g_retained_terrain_seed',-1),(assign,'$g_retained_river_seed',-1),(assign,'$g_retained_flora_seed',-1),
-        (try_begin),(eq,'$g_retained_siege',0),
+        (try_begin),(eq,'$g_retained_siege',0),(ge,'$g_retained_scene','scn_random_multi_plain_medium'),(le,'$g_retained_scene','scn_random_multi_desert_forest_large'),
             (store_random_in_range,'$g_retained_terrain_seed',1,1000000),(store_random_in_range,'$g_retained_river_seed',1,1000000),
             (store_random_in_range,'$g_retained_flora_seed',1,1000000),
             ]+apply_terrain_seeds('$g_retained_scene')+[
         (try_end)]
+
+# Native multiplayer maps by the terrain they show (fixed terrain, identical everywhere).
+TERRAIN_MAPS=[((rt_steppe,rt_steppe_forest),['scn_multi_scene_2']),
+    ((rt_snow,rt_snow_forest),['scn_multi_scene_9','scn_multi_scene_21','scn_multi_scene_14']),
+    ((rt_forest,),['scn_multi_scene_18']),
+    ((rt_desert,rt_desert_forest),['scn_multi_scene_20'])]
+PLAIN_MAPS=['scn_multi_scene_7','scn_multi_scene_4','scn_multi_scene_19','scn_multi_scene_1']
+
+def pick_map(maps):
+    ops=[(store_random_in_range,':map_pick',0,len(maps))]
+    for i,scene in enumerate(maps): ops+=[(try_begin),(eq,':map_pick',i),(assign,'$g_retained_scene',scene),(try_end)]
+    return ops
+
+def terrain_map_ops(terrain):
+    ops=[(try_begin)]
+    for i,(kinds,maps) in enumerate(TERRAIN_MAPS):
+        if i: ops.append((else_try))
+        for kind in kinds[:-1]: ops.append((this_or_next|eq,terrain,kind))
+        ops.append((eq,terrain,kinds[-1]))
+        ops+=pick_map(maps)
+    return ops+[(else_try)]+pick_map(PLAIN_MAPS)+[(try_end)]
 
 def participant_loops(ops):
     out=[]
@@ -127,17 +148,10 @@ def install_scripts(scripts):
             (try_begin),(eq,':kind',spt_town),(party_get_slot,'$g_retained_scene',':target',slot_town_walls),
             (else_try),(party_get_slot,'$g_retained_scene',':target',slot_castle_exterior),(try_end),
         (else_try),(eq,':siege',0),
-            # Native's setup_random_scene: a generated map for the terrain the
-            # armies meet on (the multiplayer variants, generated alike for every player).
+            # A Native multiplayer field map for the terrain the armies meet on. Generated
+            # (random_multi) maps came out with different terrain on the host and clients.
             (party_get_current_terrain,':terrain',':party'),
-            (assign,'$g_retained_scene','scn_random_multi_plain_large'),
-            (try_begin),(this_or_next|eq,':terrain',rt_steppe),(eq,':terrain',rt_steppe_forest),
-                (assign,'$g_retained_scene','scn_random_multi_steppe_large'),
-            (else_try),(eq,':terrain',rt_snow),(assign,'$g_retained_scene','scn_random_multi_snow_large'),
-            (else_try),(eq,':terrain',rt_snow_forest),(assign,'$g_retained_scene','scn_random_multi_snow_forest_large'),
-            (else_try),(eq,':terrain',rt_desert),(assign,'$g_retained_scene','scn_random_multi_desert_large'),
-            (else_try),(eq,':terrain',rt_desert_forest),(assign,'$g_retained_scene','scn_random_multi_desert_forest_large'),
-            (try_end),
+            ]+terrain_map_ops(':terrain')+[
         (else_try),(assign,'$g_retained_siege',-1),(try_end),
         (ge,'$g_retained_siege',0),
         (assign,'$g_cycle_attacker',':requester'),(assign,'$g_cycle_defender',':defender'),
@@ -609,6 +623,11 @@ def courage_ops(name,ops):
         elif op==(neq,':centered_agent_no',':player_agent'):out.append((agent_is_non_player,':centered_agent_no'))
         elif op==(eq,':agent_no',':player_agent'):out.append((neg|agent_is_non_player,':agent_no'))
         elif isinstance(op,tuple) and op[0]==get_player_agent_no:out.append((assign,op[1],-1))
+        elif isinstance(op,tuple) and op[0]==team_get_movement_order:
+            # Multiplayer orders belong to the commanding player (the agent's group), not
+            # the team; soldiers no player commands take no retreat order.
+            out+=[(agent_get_group,':order_group',':cur_agent'),(ge,':order_group',1),(player_is_active,':order_group'),
+                  (team_get_movement_order,op[1],':order_group',op[3])]
         else:out.append(op)
     return out
 

@@ -135,12 +135,11 @@ class AfterBattle(unittest.TestCase):
         self.assertTrue(mentions(load,'script_coop_ctx_client_screen_settle'))
     def test_field_battles_use_native_terrain_maps(self):
         start=built['coop_retained_start']
-        self.assertTrue(mentions(start,'scn_random_multi_plain_large'))
-        self.assertTrue(mentions(start,'scn_random_multi_snow_large'))
+        self.assertTrue(mentions(start,'scn_multi_scene_7'))
+        self.assertTrue(mentions(start,'scn_multi_scene_9'))
     def test_battle_map_terrain_is_identical_everywhere(self):
         import module_retained_campaign_battles as retained
         start=built['coop_retained_start']
-        self.assertTrue(any(isinstance(o,tuple) and o[0]==scene_set_terrain_seed for o in start))
         self.assertTrue(mentions(built['coop_retained_invite'],retained.EV_TERRAIN_SEEDS))
         self.assertTrue(any(isinstance(o,tuple) and o[0]==scene_set_flags for o in built['multiplayer_campaign_server_events']))
     def test_unloaded_joiners_stop_holding_the_battle(self):
