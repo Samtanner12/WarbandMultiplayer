@@ -27,6 +27,7 @@ static int g_full_probe_cycle_requested_idx = -1;
 static int g_full_probe_map_ready_idx = -1;
 static int g_full_probe_resume_ready_idx = -1;
 static int g_full_probe_remote_request_idx = -1;
+static int g_full_probe_map_seed_idx = -1;   /* $g_retained_terrain_seed: shared battle-map seed */
 static int g_full_probe_remote_scene_idx = -1;
 static int g_full_probe_remote_template_idx = -1;
 static int g_full_probe_retreat_question_idx = -1;
@@ -442,6 +443,19 @@ static void full_host_probe_start_mission(void) {
     full_probe_save_campaign_replication(players, player_count);
     *(int *)ADDR_MAP_INTERACTION_MODE = mission_type;
     ((native_void_fn)0x53C240)((void *)ADDR_NETMGR_DATA, NULL);
+    /* mbMission::start derives a randomized scene's terrain from this value
+       (g_multiplayerData+0x160; 0x4F5B57) in multiplayer. Native sends it to
+       clients with the mission information, which this probe path bypasses,
+       and the call above re-rolls it only on the server. The module shares one
+       seed per battle ($g_retained_terrain_seed), so every machine generates
+       the same battle map. */
+    if (g_full_probe_map_seed_idx >= 0) {
+        int seed = modglobals_get_int(g_full_probe_map_seed_idx, -1);
+        if (seed > 0) {
+            *(int *)0xA808A0 = seed;
+            coop_log("[full-probe] battle map seed %d\n", seed);
+        }
+    }
     /* Native startMission clears player battle state and slot lengths.
        Restore campaign ownership/party state before mission triggers run. */
     for (i = 0; i < player_count; ++i) {
@@ -601,10 +615,11 @@ static void full_host_probe_world_pump(void) {
 
 static void full_host_probe_configure(void) {
     char ini[MAX_PATH], variables[MAX_PATH];
-    const char *names[10] = { "g_full_host_probe_request", "g_full_probe_peer_ready",
+    const char *names[11] = { "g_full_host_probe_request", "g_full_probe_peer_ready",
         "g_full_probe_remote_request", "g_full_probe_remote_scene", "g_full_probe_remote_template",
-        "g_native_probe_started", "g_encounter_cycle_requested", "g_full_probe_map_ready", "g_full_probe_resume_ready", "g_retained_retreat_question" };
-    int indices[10];
+        "g_native_probe_started", "g_encounter_cycle_requested", "g_full_probe_map_ready", "g_full_probe_resume_ready", "g_retained_retreat_question",
+        "g_retained_terrain_seed" };
+    int indices[11];
     int host_requested, client_requested;
     if (strcmp(g_module_name, "NativeCoopProbe") != 0 ||
         g_steam_cfg.role != STEAM_ROLE_OFF) return;
@@ -622,7 +637,7 @@ static void full_host_probe_configure(void) {
     if (!host_requested && !client_requested) return;
     _snprintf(variables, sizeof(variables), "%s\\Modules\\%s\\variables.txt", g_game_dir, g_module_name);
     variables[sizeof(variables)-1] = 0;
-    modglobals_resolve(variables, names, indices, 10);
+    modglobals_resolve(variables, names, indices, 11);
     g_full_host_probe_request_idx = indices[0];
     g_full_probe_peer_ready_idx = indices[1];
     g_full_probe_remote_request_idx = indices[2];
@@ -633,6 +648,7 @@ static void full_host_probe_configure(void) {
     g_full_probe_map_ready_idx = indices[7];
     g_full_probe_resume_ready_idx = indices[8];
     g_full_probe_retreat_question_idx = indices[9];
+    g_full_probe_map_seed_idx = indices[10];
     if (g_full_host_probe_request_idx < 0) return;
     if (client_requested && !host_requested) {
         if (g_full_probe_remote_request_idx < 0 || g_full_probe_remote_scene_idx < 0 || g_full_probe_remote_template_idx < 0) return;

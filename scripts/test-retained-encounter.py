@@ -17,7 +17,9 @@ class Host(Authority):
         elif code==val_add:self.vars[op[1]]=a[0]+a[1]
         elif code==party_set_slot:self.parties[a[0]][a[1]]=a[2]
         elif code==party_slot_eq:return self.parties[a[0]].get(a[1],0)==a[2]
+        elif code==str_store_string:pass   # trace text
         elif code==call_script:
+            if a[0]=='script_coop_menu_trace':return True
             self.calls.append(a)
             if a[0]=='script_coop_retained_set_cooldown':
                 saved=self.params;self.params=a[1:];self.execute(cooldown);self.params=saved

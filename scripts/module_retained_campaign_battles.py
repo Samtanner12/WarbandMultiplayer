@@ -22,19 +22,28 @@ SAVE_MIN_SIMPLE_TRIGGERS=151 # existing test saves hold this many; a save will n
 
 EV_TERRAIN_SEEDS=104        # host -> client: terrain, river and flora seeds for the battle map
 
-def apply_terrain_seeds(scene):
+def apply_terrain_seeds(scene):   # unused: the engine re-rolls these from the shared seed
     # sf_randomize would roll new seeds on each machine; the seeds make the terrain identical.
     return [(scene_set_flags,scene,sf_generate|sf_auto_entry_points),
         (scene_set_terrain_seed,scene,'$g_retained_terrain_seed'),(scene_set_river_seed,scene,'$g_retained_river_seed'),
         (scene_set_flora_seed,scene,'$g_retained_flora_seed')]
 
 def terrain_seed_ops():
-    # Host: new seeds for a generated field map (-1 for siege scenes, which are fixed).
+    # Host: the seed for a generated field map (-1 for fixed scenes). As in Native, the
+    # battlefield comes from where the armies meet: the same spot gives the same field.
+    # The plugin writes it where mbMission::start reads a randomized scene's terrain.
     return [(assign,'$g_retained_terrain_seed',-1),(assign,'$g_retained_river_seed',-1),(assign,'$g_retained_flora_seed',-1),
-        (try_begin),(eq,'$g_retained_siege',0),(ge,'$g_retained_scene','scn_random_multi_plain_medium'),(le,'$g_retained_scene','scn_random_multi_desert_forest_large'),
-            (store_random_in_range,'$g_retained_terrain_seed',1,1000000),(store_random_in_range,'$g_retained_river_seed',1,1000000),
-            (store_random_in_range,'$g_retained_flora_seed',1,1000000),
-            ]+apply_terrain_seeds('$g_retained_scene')+[
+        (try_begin),(eq,'$g_retained_siege',0),
+            (ge,'$g_retained_scene','scn_random_multi_plain_medium'),(le,'$g_retained_scene','scn_random_multi_desert_forest_large'),
+            (set_fixed_point_multiplier,10),(party_get_position,pos22,'$g_cycle_attacker_party'),
+            (position_get_x,':seed_x',pos22),(position_get_y,':seed_y',pos22),
+            (val_add,':seed_x',5000),(val_add,':seed_y',5000),
+            (store_mul,'$g_retained_terrain_seed',':seed_x',7919),(store_mul,':seed_part',':seed_y',104729),
+            (val_add,'$g_retained_terrain_seed',':seed_part'),(val_mod,'$g_retained_terrain_seed',999983),(val_add,'$g_retained_terrain_seed',1),
+            (store_mul,'$g_retained_river_seed',':seed_y',7927),(store_mul,':seed_part',':seed_x',104723),
+            (val_add,'$g_retained_river_seed',':seed_part'),(val_mod,'$g_retained_river_seed',999979),(val_add,'$g_retained_river_seed',1),
+            (store_mul,'$g_retained_flora_seed',':seed_x',7933),(store_mul,':seed_part',':seed_y',104717),
+            (val_add,'$g_retained_flora_seed',':seed_part'),(val_mod,'$g_retained_flora_seed',999961),(val_add,'$g_retained_flora_seed',1),
         (try_end)]
 
 # Native multiplayer maps by the terrain they show (fixed terrain, identical everywhere).
@@ -49,14 +58,27 @@ def pick_map(maps):
     for i,scene in enumerate(maps): ops+=[(try_begin),(eq,':map_pick',i),(assign,'$g_retained_scene',scene),(try_end)]
     return ops
 
-def terrain_map_ops(terrain):
+def map_by_terrain(terrain,table,default):
     ops=[(try_begin)]
-    for i,(kinds,maps) in enumerate(TERRAIN_MAPS):
+    for i,(kinds,maps) in enumerate(table):
         if i: ops.append((else_try))
         for kind in kinds[:-1]: ops.append((this_or_next|eq,terrain,kind))
         ops.append((eq,terrain,kinds[-1]))
         ops+=pick_map(maps)
-    return ops+[(else_try)]+pick_map(PLAIN_MAPS)+[(try_end)]
+    return ops+[(else_try)]+pick_map(default)+[(try_end)]
+
+# Native's setup_random_scene picks a generated map for the terrain; these are its
+# multiplayer variants. Their terrain is made identical on every machine by the
+# host's seeds (terrain_seed_ops).
+GENERATED_MAPS=[((rt_steppe,rt_steppe_forest),['scn_random_multi_steppe_large']),
+    ((rt_snow,),['scn_random_multi_snow_large']),((rt_snow_forest,),['scn_random_multi_snow_forest_large']),
+    ((rt_desert,),['scn_random_multi_desert_large']),((rt_desert_forest,),['scn_random_multi_desert_forest_large'])]
+GENERATED_PLAIN=['scn_random_multi_plain_large']
+
+def terrain_map_ops(terrain):
+    # $g_coop_fixed_battle_maps = 1 falls back to Native's fixed multiplayer maps.
+    return [(try_begin),(eq,'$g_coop_fixed_battle_maps',1)]+map_by_terrain(terrain,TERRAIN_MAPS,PLAIN_MAPS)+[
+        (else_try)]+map_by_terrain(terrain,GENERATED_MAPS,GENERATED_PLAIN)+[(try_end)]
 
 def participant_loops(ops):
     out=[]
@@ -284,6 +306,8 @@ def install_scripts(scripts):
     replace_script(scripts,'coop_retained_release_encounter',[
         (store_script_param,':party',1),(gt,':party',0),(party_is_active,':party'),
         (party_get_battle_opponent,':opponent',':party'),
+        (assign,reg56,':party'),(assign,reg57,':opponent'),
+        ]+player_context.debug('encounter released: army {reg56}, opponent {reg57}')+[
         (party_leave_cur_battle,':party'),
         (call_script,'script_coop_retained_set_cooldown',':party'),
         (try_for_players,':recipient',1),(player_is_active,':recipient'),
@@ -424,10 +448,8 @@ def install_scripts(scripts):
         if name=='multiplayer_campaign_server_events':
             ops[:]=[op for op in ops if not(isinstance(op,tuple) and op[0]==ge and op[1]=='$g_cycle_roster_party')]
             ops[:]=[(store_script_param,':retained_event',1),
-                # Generated battle maps: the host's seeds, applied before the scene loads (67).
-                (try_begin),(eq,':retained_event',67),(ge,'$g_retained_terrain_seed',0),
-                    (store_script_param,':seeded_scene',2),]+apply_terrain_seeds(':seeded_scene')+[
-                (try_end),
+                # Generated battle maps: the host's seed, written into the engine by the plugin
+                # (g_multiplayerData+0x160) before the scene starts.
                 (try_begin),(eq,':retained_event',EV_TERRAIN_SEEDS),
                     (store_script_param,'$g_retained_terrain_seed',2),(store_script_param,'$g_retained_river_seed',3),
                     (store_script_param,'$g_retained_flora_seed',4),
@@ -689,7 +711,30 @@ def install_missions(missions):
                     (call_script,'script_coop_retained_run_away',':agent',':mission_time'),
                 (try_end),
             ]),
-            (ti_after_mission_start,0,0,[(neg|multiplayer_is_server)],[(assign,'$g_retained_retreat_question',0),(assign,'$g_multiplayer_allow_player_banners',0)]),
+            (ti_after_mission_start,0,0,[(neg|multiplayer_is_server)],[(assign,'$g_retained_retreat_question',0),(assign,'$g_multiplayer_allow_player_banners',0),
+                (assign,'$g_terrain_diag_count',0)]),
+            # Terrain diagnostics: a client's own soldier should stand on the client's ground
+            # (0 cm) when the host and client generated the same battle map.
+            (2,0,0,[(neg|multiplayer_is_server),(lt,'$g_terrain_diag_count',6)],[
+                (multiplayer_get_my_player,':me'),(ge,':me',0),(player_get_agent_id,':agent',':me'),(ge,':agent',0),
+                (agent_is_alive,':agent'),(val_add,'$g_terrain_diag_count',1),
+                (set_fixed_point_multiplier,100),(agent_get_position,pos21,':agent'),
+                (position_get_distance_to_terrain,reg56,pos21),(position_get_z,reg57,pos21),(store_current_scene,reg58),
+                (assign,reg59,'$g_retained_terrain_seed'),
+                ]+player_context.debug('terrain (client): scene {reg58}, seed {reg59}: my soldier at {reg57} cm, {reg56} cm above my ground')+[
+            ]),
+            (ti_after_mission_start,0,0,[(multiplayer_is_server)],[(assign,'$g_terrain_diag_count',0),
+                (store_current_scene,reg58),(assign,reg59,'$g_retained_terrain_seed'),(assign,reg56,'$g_retained_river_seed'),
+                (assign,reg57,'$g_retained_flora_seed'),
+                ]+player_context.debug('terrain (host): scene {reg58}, seeds {reg59}/{reg56}/{reg57}')+[]),
+            (2,0,0,[(multiplayer_is_server),(eq,'$g_cycle_armies_spawned',1),(lt,'$g_terrain_diag_count',2)],[
+                (val_add,'$g_terrain_diag_count',1),(set_fixed_point_multiplier,100),
+                (try_for_agents,':agent'),(agent_is_human,':agent'),(agent_slot_eq,':agent',6103,1),
+                    (agent_get_position,pos21,':agent'),(position_get_distance_to_terrain,reg56,pos21),(position_get_z,reg57,pos21),
+                    (assign,reg58,':agent'),
+                    ]+player_context.debug('terrain (host): player soldier {reg58} at {reg57} cm, {reg56} cm above the host ground')+[
+                (try_end),
+            ]),
             (ti_question_answered,0,0,[(neg|multiplayer_is_server)],[
                 (store_trigger_param_1,':answer'),(eq,'$g_retained_retreat_question',1),
                 (assign,'$g_retained_retreat_question',0),

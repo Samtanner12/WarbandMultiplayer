@@ -1655,3 +1655,5 @@ g_ctx_screen_shown
 g_retained_terrain_seed
 g_retained_river_seed
 g_retained_flora_seed
+g_terrain_diag_count
+$g_coop_fixed_battle_maps
