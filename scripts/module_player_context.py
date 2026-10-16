@@ -11,6 +11,8 @@ import os, re
 from header_common import *
 from header_operations import *
 from header_game_menus import mnf_scale_picture
+from header_parties import ai_bhvr_patrol_party
+from header_triggers import key_f11
 from module_constants import *
 
 CTX_PLAYER, CTX_PARTY, CTX_TROOP = '$g_ctx_player', '$g_ctx_party', '$g_ctx_troop'
@@ -51,9 +53,11 @@ EV_OPEN_LOOT, EV_COMPANION_OFFER, EV_OPEN_EXCHANGE = 100, 101, 102
 # client -> host
 EV_TAKE_PRISONERS, EV_RELEASE_PRISONERS, EV_SPOILS_DONE = 90, 91, 92
 EV_MENU_CHOOSE, EV_SCREEN_CLOSED, EV_TAKE_COMPANIONS = 93, 94, 103
+EV_TEST_TROOPS = 105             # test build only: F11 adds troops to the player's army
+TEST_TROOPS_KEY = True            # turn off for a release build
 CLIENT_EVENT_IDS = [EV_MENU_BEGIN, EV_MENU_OPTION, EV_MENU_SHOW, EV_MENU_CLOSE, EV_MENU_MESSAGE,
                     EV_OPEN_LOOT, EV_COMPANION_OFFER, EV_OPEN_EXCHANGE, EV_LOOT_SLOT, EV_PRISONER_OFFER]
-HOST_EVENT_IDS = [EV_TAKE_PRISONERS, EV_RELEASE_PRISONERS, EV_SPOILS_DONE, EV_MENU_CHOOSE,
+HOST_EVENT_IDS = [EV_TEST_TROOPS, EV_TAKE_PRISONERS, EV_RELEASE_PRISONERS, EV_SPOILS_DONE, EV_MENU_CHOOSE,
                   EV_SCREEN_CLOSED, EV_TAKE_COMPANIONS]
 # Native globals that describe "the player's" encounter, swapped per player.
 PLAYER_SCOPED = re.compile(r'^\$(g_encounter|g_encountered|encountered_party|g_enemy|g_ally_party|'
@@ -700,6 +704,19 @@ def battle_scripts():
             (store_current_hours, ':until'), (val_add, ':until', ':hours'),
             (player_set_slot, ':player', CAPTIVE_SLOT, ':until'),
             (disable_party, CTX_PARTY),
+            # The captor's last order was the player's party, now hidden: patrol near the
+            # closest center and let Native's AI pick its next aim.
+            (try_begin), (gt, '$capturer_party', 0), (party_is_active, '$capturer_party'),
+                (party_is_non_player, '$capturer_party'),
+                (assign, ':home', -1), (assign, ':best', 1000000),
+                (try_for_range, ':center', centers_begin, centers_end), (party_is_active, ':center'),
+                    (store_distance_to_party_from_party, ':distance', '$capturer_party', ':center'), (lt, ':distance', ':best'),
+                    (assign, ':best', ':distance'), (assign, ':home', ':center'),
+                (try_end),
+                (ge, ':home', 0),
+                (party_set_slot, '$capturer_party', slot_party_ai_state, spai_undefined),
+                (party_set_ai_behavior, '$capturer_party', ai_bhvr_patrol_party), (party_set_ai_object, '$capturer_party', ':home'),
+            (try_end),
             (try_for_players, ':recipient', 1), (player_is_active, ':recipient'),
                 (player_slot_eq, ':recipient', slot_player_coop_char_state, coop_char_state_ready),
                 (multiplayer_send_2_int_to_player, ':recipient', SERVER, 79, CTX_PARTY),
@@ -872,6 +889,14 @@ def host_client_events():
             (call_script, 'script_coop_menu_choose', ':player_no', ':ctx_a'),
         (else_try), (eq, ':event_type', EV_SCREEN_CLOSED),
             (call_script, 'script_coop_ctx_screen_closed', ':player_no'),
+        (else_try), (eq, ':event_type', EV_TEST_TROOPS), (eq, TEST_TROOPS_KEY, 1),
+            (player_slot_eq, ':player_no', slot_player_coop_char_state, coop_char_state_ready),
+            (player_get_party_id, ':test_army', ':player_no'), (party_is_active, ':test_army'),
+            (party_add_members, ':test_army', 'trp_swadian_footman', 8),
+            (party_add_members, ':test_army', 'trp_swadian_crossbowman', 4),
+            (party_add_members, ':test_army', 'trp_swadian_man_at_arms', 3),
+            (call_script, 'script_coop_ctx_push_own_roster', ':player_no'),
+            (call_script, 'script_coop_save_character', ':player_no'),
         (else_try), (eq, ':event_type', EV_TAKE_PRISONERS), (store_script_param, ':ctx_a', 3), (store_script_param, ':ctx_b', 4),
             (call_script, 'script_coop_ctx_take_offer', ':player_no', ':ctx_a', ':ctx_b', 0),
         (else_try), (eq, ':event_type', EV_TAKE_COMPANIONS), (store_script_param, ':ctx_a', 3), (store_script_param, ':ctx_b', 4),
@@ -1137,6 +1162,10 @@ def host_triggers():
 
 def client_triggers():
     return [
+        # Test build: F11 asks the host for troops (EV_TEST_TROOPS).
+        (0, [(neg|multiplayer_is_server), (multiplayer_is_campaign), (eq, TEST_TROOPS_KEY, 1), (key_clicked, key_f11),
+             (multiplayer_send_int_to_server, CLIENT, EV_TEST_TROOPS),
+             (display_message, '@Test build: asked the host for 15 troops.')]),
         # Back on the map after a Native screen: report it closed. Map triggers do
         # not run while the screen is up, so a few map frames means it has closed.
         (0, [(neg|multiplayer_is_server), (multiplayer_is_campaign), (gt, '$g_ctx_screen_open', 0),

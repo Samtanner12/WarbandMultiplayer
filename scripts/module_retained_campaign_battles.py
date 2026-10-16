@@ -15,6 +15,8 @@ CONFIRMED=6017
 COHORT_BASE=17000
 COOLDOWN_SLOT=6040          # party slot: application time (ms) before which no new battle starts
 BATTLE_COOLDOWN_MS=3000
+FIELD_SPAN_M=200              # metres between the two armies on a generated battle map
+FIELD_SPAN_CM=FIELD_SPAN_M*100
 JOIN_TIME_SLOT=6042           # party slot: application time (ms) it was registered for the battle
 JOIN_LOAD_TIMEOUT_MS=30000   # a human army not loaded in by then no longer holds the battle open
 DEFEAT_CLEAR_HOURS=12        # game hours a beaten army waits for its victor's Native menus
@@ -605,6 +607,7 @@ def install_native_scripts(scripts):
                 # Native pauses the world while the player is in a menu: no new encounter for a
                 # player answering a host-run menu or conversation (its window could not show it).
                 (try_begin),(party_get_player_id,':busy_player',':cool_party'),(ge,':busy_player',1),
+                    (this_or_next|player_slot_eq,':busy_player',player_context.POST_BATTLE_SLOT,1),
                     (player_slot_ge,':busy_player',player_context.MENU_SLOT,1),(assign,':cooling',2),(try_end),
                 (ge,':cooling',1),
                 (try_begin),(eq,':cooling',2),(leave_encounter),(try_end),
@@ -784,19 +787,19 @@ def install_missions(missions):
                     (try_begin),(eq,'$g_retained_siege',1),(eq,':team',1),(assign,':entry',10),(try_end),
                     (set_fixed_point_multiplier,100),(entry_point_get_position,pos5,':entry'),
                     # Generated maps place their entry points far apart (over 400 m on the large
-                    # ones): as in a Native field battle, the second army stands about 110 m from
+                    # ones): as in a Native field battle, the second army stands about FIELD_SPAN_M metres from
                     # the first, on the line towards its own entry point and facing the same way.
                     # A map without that entry point gets the first army's heading instead.
                     (try_begin),(neq,':entry',0),
                         (position_get_x,':entry_x',pos5),(position_get_y,':entry_y',pos5),
                         (entry_point_get_position,pos6,0),(position_get_x,':first_x',pos6),(position_get_y,':first_y',pos6),
                         (try_begin),(eq,':entry_x',0),(eq,':entry_y',0),
-                            (copy_position,pos5,pos6),(position_move_y,pos5,11000),(position_rotate_z,pos5,180),
+                            (copy_position,pos5,pos6),(position_move_y,pos5,FIELD_SPAN_CM),(position_rotate_z,pos5,180),
                         (else_try),(gt,'$g_retained_terrain_seed',0),
-                            (get_distance_between_positions,':span',pos5,pos6),(gt,':span',11000),
+                            (get_distance_between_positions,':span',pos5,pos6),(gt,':span',FIELD_SPAN_CM),
                             (store_sub,':dx',':entry_x',':first_x'),(store_sub,':dy',':entry_y',':first_y'),
-                            (val_mul,':dx',110),(val_div,':dx',':span'),(val_mul,':dx',100),
-                            (val_mul,':dy',110),(val_div,':dy',':span'),(val_mul,':dy',100),
+                            (val_mul,':dx',FIELD_SPAN_M),(val_div,':dx',':span'),(val_mul,':dx',100),
+                            (val_mul,':dy',FIELD_SPAN_M),(val_div,':dy',':span'),(val_mul,':dy',100),
                             (val_add,':dx',':first_x'),(val_add,':dy',':first_y'),
                             (position_set_x,pos5,':dx'),(position_set_y,pos5,':dy'),
                         (try_end),
