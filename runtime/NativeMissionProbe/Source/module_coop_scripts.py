@@ -14348,7 +14348,9 @@ coop_scripts = [
 		# Free, or already held by THIS player -> enter. A self-held lock must
 		# not bounce with "another player is visiting it": that strands the
 		# player attached to the center with no way back to the Leave option.
-		(assign, ":can_enter", 0),
+		# Any number of players may be inside a center at once; the lock records
+		# who is where (the player slot) and attaches their party.
+		(assign, ":can_enter", 1),
 		(try_begin),
 			(eq, ":lock_player", -1),
 			(assign, ":can_enter", 1),
@@ -14584,8 +14586,8 @@ coop_scripts = [
             # Validate lock
             (try_begin),
                 (is_between, ":center_id", centers_begin, centers_end),
-                (party_get_slot, ":lock_player", ":center_id", slot_center_coop_lock_player),
-                (eq, ":lock_player", ":player_no"),
+                # Validated against the player's own center: several players may share one.
+                (player_slot_eq, ":player_no", slot_player_coop_locked_center, ":center_id"),
                 (try_begin),
                     (eq, ":count", 0),
                     # Info request: send volunteer pool data
