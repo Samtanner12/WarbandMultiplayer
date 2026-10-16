@@ -178,6 +178,8 @@ def install_scripts(scripts):
         (ge,'$g_retained_siege',0),
         (assign,'$g_cycle_attacker',':requester'),(assign,'$g_cycle_defender',':defender'),
         (assign,'$g_cycle_attacker_party',':party'),(assign,'$g_cycle_defender_party',':target'),
+        # The map seed goes out with every invite, so it is set before the first one.
+        ]+terrain_seed_ops()+[
         (assign,'$g_retained_party_count',0),(assign,'$g_retained_ai_spawned',0),
         (assign,'$g_cycle_result_sent',0),(assign,'$g_cycle_armies_spawned',0),
         (assign,'$g_cycle_retreat_requested',0),(assign,'$g_full_probe_peer_ready',0),
@@ -189,7 +191,6 @@ def install_scripts(scripts):
         (call_script,'script_coop_retained_register_party',':target',1,':defender'),
         (call_script,'script_coop_retained_invite',':requester',0),
         (try_begin),(ge,':defender',1),(call_script,'script_coop_retained_invite',':defender',1),(try_end),
-        ]+terrain_seed_ops()+[
         (start_multiplayer_mission,'mt_native_session_probe','$g_retained_scene',1),
         (assign,reg0,1),
     ])
@@ -528,7 +529,7 @@ def install_triggers(triggers):
                 '$g_cycle_attacker_party','$g_cycle_defender_party'),
         (try_end),
     ]))
-    triggers += player_context.client_triggers()
+    triggers += player_context.client_triggers()+player_context.host_triggers()
     # A beaten army whose victor never reached Native's victory menu (left, disconnected).
     triggers.append((1,[(multiplayer_is_server),(multiplayer_is_campaign),(store_current_hours,':now'),
         (try_for_parties,':party'),(party_slot_ge,':party',player_context.DEFEATED_SLOT,1),

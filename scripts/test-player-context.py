@@ -145,6 +145,18 @@ class AfterBattle(unittest.TestCase):
         self.assertTrue(mentions(built['coop_retained_invite'],retained.EV_TERRAIN_SEEDS))
         # The engine derives the terrain from the shared seed; the scene keeps sf_randomize.
         self.assertFalse(any(isinstance(o,tuple) and o[0] in (scene_set_flags,scene_set_terrain_seed) for o in start))
+    def test_map_seed_is_set_before_any_invite(self):
+        start=built['coop_retained_start']
+        seed=[i for i,o in enumerate(start) if isinstance(o,tuple) and o[0]==party_get_position][0]
+        invite=[i for i,o in enumerate(start) if isinstance(o,tuple) and o[:2]==(call_script,'script_coop_retained_invite')][0]
+        self.assertLess(seed,invite)
+    def test_captivity_holds_the_party_then_offers_native_escape(self):
+        for name in ['captivity_start_wilderness','captivity_wilderness_taken_prisoner','captivity_end_wilderness_escape']:
+            self.assertIn('coop_menu_show_'+name,built)
+        self.assertTrue(mentions(built['coop_menu_choose_captivity_wilderness_taken_prisoner'],'script_coop_ctx_hold_captive'))
+        self.assertTrue(any(isinstance(o,tuple) and o[0]==disable_party for o in built['coop_ctx_hold_captive']))
+        self.assertTrue(mentions(built['coop_ctx_release_captive'],'mnu_captivity_wilderness_check'))
+        self.assertFalse(any('set_camera_follow_party'==o for o in []))
     def test_unloaded_joiners_stop_holding_the_battle(self):
         import module_retained_campaign_battles as retained
         self.assertTrue(mentions(built['coop_retained_register_party'],retained.JOIN_TIME_SLOT))

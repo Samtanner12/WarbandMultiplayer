@@ -15,7 +15,10 @@ from module_constants import *
 
 CTX_PLAYER, CTX_PARTY, CTX_TROOP = '$g_ctx_player', '$g_ctx_party', '$g_ctx_troop'
 MIRRORED_MENUS = ['simple_encounter', 'encounter_retreat_confirm', 'encounter_retreat', 'battle_debrief',
-                  'total_victory', 'enemy_slipped_away', 'total_defeat', 'permanent_damage']
+                  'total_victory', 'enemy_slipped_away', 'total_defeat', 'permanent_damage',
+                  # Native captivity after a lost or surrendered field battle.
+                  'captivity_start_wilderness', 'captivity_start_wilderness_surrender', 'captivity_start_wilderness_defeat',
+                  'captivity_wilderness_taken_prisoner', 'captivity_wilderness_check', 'captivity_end_wilderness_escape']
 BANK_PLAYER_BASE = 20000                                  # player slots: this player's globals
 BANK_HOLDER, BANK_HOST_BASE = 'trp_temp_array_c', 20000   # host values while a context is open
 # Native's per-encounter temporary parties, saved per player.
@@ -63,21 +66,25 @@ PLAYER_SCOPED = re.compile(r'^\$(g_encounter|g_encountered|encountered_party|g_e
     r'g_relation_boost|g_private_battle|g_disable_condescending|g_joined_battle_to_help|g_player_luck|'
     r'g_prison_heroes|pin_number|players_kingdom|player_honor|player_right_to_rule|npc_with_personality|'
     r'npc_map_talk_context|g_talk_troop|g_talk_agent|supported_pretender|g_ctx_talk_troop|g_ctx_dialog|'
-    r'g_ctx_repeat_object)')
+    r'g_ctx_repeat_object|auto_menu|capturer_party|g_player_is_captive|g_player_icon_state)')
 # Conversation state the host keeps per player between the player's answers.
 DIALOG_GLOBALS = ['$g_ctx_talk_troop', '$g_ctx_dialog', '$g_ctx_repeat_object']
-DIALOG_SLOT, DLG_STATE_SLOT = 19396, 19395   # player slots: answering a Native conversation; its state
+DIALOG_SLOT, DLG_STATE_SLOT = 19396, 19395
+CAPTIVE_SLOT = 19394                  # player slot: game hour a held prisoner is let go   # player slots: answering a Native conversation; its state
 DLG_ENTRY_BASE, DLG_REPEAT_BASE = 19400, 19420   # player slots: answer row -> dialog entry, repeat object
 # The engine's main-party battle; Native's meeting scenes become host-run conversations.
 DROPPED_SCRIPTS = ['script_let_nearby_parties_join_current_battle']
 REPLACED_SCRIPTS = {'script_clear_party_group': 'script_coop_ctx_clear_party_group',
                     'script_setup_party_meeting': 'script_coop_ctx_party_meeting',
-                    'script_setup_troop_meeting': 'script_coop_ctx_troop_meeting'}
+                    'script_setup_troop_meeting': 'script_coop_ctx_troop_meeting',
+                    # Native fast-forwards time; here the player's party is held while the world runs.
+                    'script_stay_captive_for_hours': 'script_coop_ctx_hold_captive'}
 DROPPED_OPS = set(globals()[name] for name in ['set_jump_mission', 'jump_to_scene', 'set_party_battle_mode',
     'set_battle_advantage', 'unlock_achievement', 'set_achievement_stat',
     'party_quick_attach_to_current_battle', 'rest_for_hours', 'rest_for_hours_interactive', 'set_jump_entry',
     'modify_visitors_at_site', 'reset_visitors', 'set_visitor', 'set_visitors', 'end_current_battle',
-    'play_track', 'start_map_conversation', 'party_ignore_player', 'simulate_battle'] if name in globals())
+    'play_track', 'play_cue_track', 'start_map_conversation', 'party_ignore_player', 'simulate_battle',
+    'set_camera_follow_party'] if name in globals())
 CLOSE_OPS = set([change_screen_return, change_screen_map, change_screen_quit])
 FLAGS = neg | this_or_next
 
@@ -681,6 +688,39 @@ def battle_scripts():
             ] + debug('after battle, player {reg56}: result {reg57}, context depth {reg58}, enemy casualties {reg59}, own casualties {reg60}, hero xp {reg55}') + [
             (call_script, 'script_coop_ctx_exit', ':player'),
         (try_end)]),
+    # Native captivity: instead of fast-forwarding time, the player's party is held
+    # (hidden) for those hours while the world goes on, then Native's escape follows.
+    ('coop_ctx_hold_captive', [(store_script_param, ':hours', 1),
+        (try_begin), (gt, CTX_PLAYER, 0), (store_sub, ':player', CTX_PLAYER, 1),
+            (call_script, 'script_coop_retained_release_encounter', CTX_PARTY),
+            (store_current_hours, ':until'), (val_add, ':until', ':hours'),
+            (player_set_slot, ':player', CAPTIVE_SLOT, ':until'),
+            (disable_party, CTX_PARTY),
+            (try_for_players, ':recipient', 1), (player_is_active, ':recipient'),
+                (player_slot_eq, ':recipient', slot_player_coop_char_state, coop_char_state_ready),
+                (multiplayer_send_2_int_to_player, ':recipient', SERVER, 79, CTX_PARTY),
+            (try_end),
+            (assign, reg0, ':hours'),
+            (str_store_string, s49, '@You are held prisoner. A chance to escape may come in about {reg0} hours.'),
+            (call_script, 'script_coop_ctx_send_message'),
+        (try_end)]),
+    ('coop_ctx_release_captive', [(store_script_param, ':player', 1),
+        (try_begin), (player_is_active, ':player'),
+            (player_set_slot, ':player', CAPTIVE_SLOT, 0),
+            (player_get_party_id, ':party', ':player'), (gt, ':party', 0), (enable_party, ':party'),
+            (try_for_players, ':recipient', 1), (player_is_active, ':recipient'),
+                (player_slot_eq, ':recipient', slot_player_coop_char_state, coop_char_state_ready),
+                (call_script, 'script_coop_retained_send_map_party', ':recipient', ':party', 0),
+            (try_end),
+            (call_script, 'script_coop_ctx_enter', ':player'),
+            (assign, '$g_ctx_menu_next', '$auto_menu'),
+            (try_begin), (le, '$g_ctx_menu_next', 0), (assign, '$g_ctx_menu_next', 'mnu_captivity_wilderness_check'), (try_end),
+            (assign, '$auto_menu', -1), (assign, '$g_ctx_menu_battle', 0), (assign, '$g_ctx_menu_screen', 0),
+            (assign, '$g_ctx_menu_close', 0),
+            (call_script, 'script_coop_menu_present', ':player'),
+            (call_script, 'script_coop_ctx_exit', ':player'),
+            ] + commit_ops() + [
+        (try_end)]),
     # Back on the map: Native's debrief, then victory, defeat or retreat.
     ('coop_ctx_post_battle', [(store_script_param, ':player', 1),
         (try_begin), (player_is_active, ':player'), (player_slot_eq, ':player', POST_BATTLE_SLOT, 1),
@@ -1071,6 +1111,16 @@ def install_menus(menus):
         (assign, '$g_ctx_screen_shown', 0), (call_script, 'script_coop_ctx_client_screen_settle'), (change_screen_return)])])]
     menus += [('coop_menu_mirror', mnf_scale_picture, '{s50}', 'none', load, options),
               ('coop_menu_mirror_close', 0, ' ', 'none', [(change_screen_return)], [])]
+
+def host_triggers():
+    return [
+        # Held prisoners whose time is up get Native's escape (captivity_wilderness_check).
+        (1, [(multiplayer_is_server), (multiplayer_is_campaign), (store_current_hours, ':now'),
+             (try_for_players, ':player', 1), (player_is_active, ':player'),
+                 (player_slot_eq, ':player', slot_player_coop_char_state, coop_char_state_ready),
+                 (player_get_slot, ':until', ':player', CAPTIVE_SLOT), (gt, ':until', 0), (le, ':until', ':now'),
+                 (call_script, 'script_coop_ctx_release_captive', ':player'),
+             (try_end)])]
 
 def client_triggers():
     return [
