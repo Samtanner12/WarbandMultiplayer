@@ -70,7 +70,8 @@ PLAYER_SCOPED = re.compile(r'^\$(g_encounter|g_encountered|encountered_party|g_e
 # Conversation state the host keeps per player between the player's answers.
 DIALOG_GLOBALS = ['$g_ctx_talk_troop', '$g_ctx_dialog', '$g_ctx_repeat_object']
 DIALOG_SLOT, DLG_STATE_SLOT = 19396, 19395
-CAPTIVE_SLOT = 19394                  # player slot: game hour a held prisoner is let go   # player slots: answering a Native conversation; its state
+CAPTIVE_SLOT = 19394                  # player slot: game hour a held prisoner is let go
+IGNORED_UNTIL_SLOT = 6043             # party slot: game hour until which AI parties leave this player alone   # player slots: answering a Native conversation; its state
 DLG_ENTRY_BASE, DLG_REPEAT_BASE = 19400, 19420   # player slots: answer row -> dialog entry, repeat object
 # The engine's main-party battle; Native's meeting scenes become host-run conversations.
 DROPPED_SCRIPTS = ['script_let_nearby_parties_join_current_battle']
@@ -113,6 +114,7 @@ def translate(op):
     if DEFAULT_TROOP_ARITY.get(code) == len(op): op = op + (CTX_TROOP,)
     if DEFAULT_PARTY_ARITY.get(code) == len(op): op = op + (CTX_PARTY,)
     if code == call_script and op[1] in DROPPED_SCRIPTS: return []
+    if code == party_ignore_player: return [(call_script, 'script_coop_ctx_ignore_player', op[1], op[2])]
     if code == call_script and op[1] in REPLACED_SCRIPTS: return [rewrite_refs((op[0], REPLACED_SCRIPTS[op[1]]) + op[2:])]
     if code in DROPPED_OPS: return []
     if code == get_achievement_stat: return [(assign, op[1], 0)]
@@ -180,6 +182,8 @@ def closure_op(op):
         return (call_script, 'script_coop_ctx_add_xp', op[1])
     if isinstance(op, tuple) and op[0] == party_add_xp and op[1] == CTX_PARTY:
         return (call_script, 'script_coop_ctx_party_add_xp', op[2])
+    if isinstance(op, tuple) and op[0] == party_ignore_player:
+        return (call_script, 'script_coop_ctx_ignore_player', op[1], op[2])
     return op
 
 def menu_ops(menu):
@@ -1070,6 +1074,15 @@ def dialog_scripts(entries):
                 (try_begin), (gt, reg0, 0), (str_store_string, s49, '@You gained {reg0} experience.'),
                     (call_script, 'script_coop_ctx_send_message'), (try_end),
             (else_try), (party_add_xp, CTX_PARTY, ':xp'),
+            (try_end)]),
+        # Native party_ignore_player: AI parties leave the player alone for some hours.
+        # In multiplayer that is kept on the player's party (see game_event_party_encounter).
+        ('coop_ctx_ignore_player', [(store_script_param, ':ai_party', 1), (store_script_param, ':hours', 2),
+            (try_begin), (gt, CTX_PLAYER, 0),
+                (store_current_hours, ':until'), (val_add, ':until', ':hours'),
+                (party_get_slot, ':current', CTX_PARTY, IGNORED_UNTIL_SLOT), (val_max, ':until', ':current'),
+                (party_set_slot, CTX_PARTY, IGNORED_UNTIL_SLOT, ':until'),
+            (else_try), (party_ignore_player, ':ai_party', ':hours'),
             (try_end)]),
         ('coop_ctx_add_xp', [(store_script_param, ':xp', 1),
             (try_begin), (gt, CTX_PLAYER, 0), (add_xp_to_troop, ':xp', CTX_TROOP),

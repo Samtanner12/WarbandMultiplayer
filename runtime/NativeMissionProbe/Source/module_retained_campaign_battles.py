@@ -597,6 +597,17 @@ def install_native_scripts(scripts):
                 (try_begin),(gt,':camp_encountered',0),(party_is_active,':camp_encountered'),
                     (party_get_slot,':cool_until',':camp_encountered',COOLDOWN_SLOT),
                     (gt,':cool_until',':cool_now'),(le,':cool_until',':cool_limit'),(assign,':cooling',1),(try_end),
+                # Native: nothing attacks a party left alone after captivity (party_ignore_player).
+                (try_begin),(gt,':camp_encountered',0),(party_is_active,':camp_encountered'),
+                    (store_current_hours,':ignore_now'),(party_slot_ge,':cool_party',player_context.IGNORED_UNTIL_SLOT,':ignore_now'),
+                    (get_party_ai_current_object,':ignore_target',':camp_encountered'),(eq,':ignore_target',':cool_party'),
+                    (assign,':cooling',1),(try_end),
+                # Native pauses the world while the player is in a menu: no new encounter for a
+                # player answering a host-run menu or conversation (its window could not show it).
+                (try_begin),(party_get_player_id,':busy_player',':cool_party'),(ge,':busy_player',1),
+                    (player_slot_ge,':busy_player',player_context.MENU_SLOT,1),(assign,':cooling',2),(try_end),
+                (ge,':cooling',1),
+                (try_begin),(eq,':cooling',2),(leave_encounter),(try_end),
                 (eq,':cooling',1),
                 (party_leave_cur_battle,':cool_party'),
                 (try_begin),(gt,':camp_encountered',0),(party_is_active,':camp_encountered'),
@@ -771,6 +782,14 @@ def install_missions(missions):
                     (party_set_slot,':party',6017,1),
                     (store_mul,':entry',':team',32),
                     (try_begin),(eq,'$g_retained_siege',1),(eq,':team',1),(assign,':entry',10),(try_end),
+                    (set_fixed_point_multiplier,100),(entry_point_get_position,pos5,':entry'),
+                    (try_begin),(neq,':entry',0),(position_get_x,':entry_x',pos5),(position_get_y,':entry_y',pos5),
+                        (eq,':entry_x',0),(eq,':entry_y',0),
+                        # The map has no such entry point: face the first army across the field.
+                        (entry_point_get_position,pos5,0),(position_move_y,pos5,8000),(position_rotate_z,pos5,180),
+                    (try_end),
+                    (position_get_x,reg57,pos5),(position_get_y,reg58,pos5),(position_get_z,reg59,pos5),(assign,reg56,':party'),(assign,reg60,':entry'),
+                    ]+player_context.debug('spawn: army {reg56} at entry {reg60}: {reg57}, {reg58}, height {reg59} cm')+[
                     (party_get_num_companion_stacks,':stacks',':party'),(assign,':spawned',0),
                     (try_for_range,':stack',0,':stacks'),
                         (party_stack_get_troop_id,':troop',':party',':stack'),
@@ -783,10 +802,13 @@ def install_missions(missions):
                             (assign,':healthy',0),(try_begin),(gt,':health',15),(assign,':healthy',1),(try_end),
                         (try_end),
                         (try_for_range,':soldier',0,':healthy'),
-                            (entry_point_get_position,pos4,':entry'),
+                            (copy_position,pos4,pos5),
                             (store_mod,':column',':spawned',10),(store_div,':row',':spawned',10),
                             (store_mul,':x',':column',150),(val_sub,':x',750),(store_mul,':y',':row',150),
-                            (position_move_x,pos4,':x'),(position_move_y,pos4,':y'),(set_spawn_position,pos4),
+                            (position_move_x,pos4,':x'),(position_move_y,pos4,':y'),
+                            # Generated maps vary in height; their terrain now matches on every machine.
+                            (try_begin),(gt,'$g_retained_terrain_seed',0),(position_set_z_to_ground_level,pos4),(try_end),
+                            (set_spawn_position,pos4),
                             (spawn_agent,':troop'),(assign,':agent',reg0),
                             (agent_set_team,':agent',':team'),(assign,':group',0),
                             (try_begin),(ge,':owner',1),(assign,':group',':owner'),(try_end),

@@ -2310,11 +2310,12 @@ script_coop_ctx_party_meeting = 2308
 script_coop_ctx_troop_meeting = 2309
 script_coop_ctx_partner_quest = 2310
 script_coop_ctx_party_add_xp = 2311
-script_coop_ctx_add_xp = 2312
-script_coop_menu_trace = 2313
-script_coop_menu_mirror_string = 2314
-script_coop_ctx_client_screen_settle = 2315
-script_coop_ctx_client_open_exchange = 2316
-script_coop_ctx_client_exchange_diff = 2317
+script_coop_ctx_ignore_player = 2312
+script_coop_ctx_add_xp = 2313
+script_coop_menu_trace = 2314
+script_coop_menu_mirror_string = 2315
+script_coop_ctx_client_screen_settle = 2316
+script_coop_ctx_client_open_exchange = 2317
+script_coop_ctx_client_exchange_diff = 2318
 
 
