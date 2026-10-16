@@ -1,5 +1,8 @@
 # Private Warband campaign multiplayer project
 
+Current issues (what works, what's fixed but not yet confirmed, and what's
+still open) are tracked in [ISSUES.md](ISSUES.md).
+
 ## Portable private internet test
 
 The latest isolated seamless army battle prototype is packaged by

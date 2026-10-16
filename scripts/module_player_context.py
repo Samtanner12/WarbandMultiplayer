@@ -894,8 +894,10 @@ def host_client_events():
         (else_try), (eq, ':event_type', EV_SCREEN_CLOSED),
             (call_script, 'script_coop_ctx_screen_closed', ':player_no'),
         (else_try), (eq, ':event_type', EV_TEST_TROOPS), (eq, TEST_TROOPS_KEY, 1),
+            (assign, reg56, ':player_no')] + debug('test troops: request from player {reg56}') + [
             (player_slot_eq, ':player_no', slot_player_coop_char_state, coop_char_state_ready),
-            (player_get_party_id, ':test_army', ':player_no'), (party_is_active, ':test_army'),
+            # No party_is_active: a held prisoner's party is disabled but still takes troops.
+            (player_get_party_id, ':test_army', ':player_no'), (gt, ':test_army', 0),
             (party_add_members, ':test_army', 'trp_swadian_footman', 8),
             (party_add_members, ':test_army', 'trp_swadian_crossbowman', 4),
             (party_add_members, ':test_army', 'trp_swadian_man_at_arms', 3),
