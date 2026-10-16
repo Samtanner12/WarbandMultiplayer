@@ -4,6 +4,7 @@ from header_common import *
 from header_operations import *
 from header_triggers import *
 from header_mission_templates import *
+from header_scenes import sf_generate, sf_auto_entry_points
 from header_terrain_types import rt_water, rt_mountain, rt_steppe, rt_steppe_forest, rt_snow, rt_snow_forest, rt_desert, rt_desert_forest
 from module_constants import *
 import module_player_context as player_context
@@ -18,6 +19,23 @@ JOIN_TIME_SLOT=6042           # party slot: application time (ms) it was registe
 JOIN_LOAD_TIMEOUT_MS=30000   # a human army not loaded in by then no longer holds the battle open
 DEFEAT_CLEAR_HOURS=12        # game hours a beaten army waits for its victor's Native menus
 SAVE_MIN_SIMPLE_TRIGGERS=151 # existing test saves hold this many; a save will not load with fewer
+
+EV_TERRAIN_SEEDS=104        # host -> client: terrain, river and flora seeds for the battle map
+
+def apply_terrain_seeds(scene):
+    # sf_randomize would roll new seeds on each machine; the seeds make the terrain identical.
+    return [(scene_set_flags,scene,sf_generate|sf_auto_entry_points),
+        (scene_set_terrain_seed,scene,'$g_retained_terrain_seed'),(scene_set_river_seed,scene,'$g_retained_river_seed'),
+        (scene_set_flora_seed,scene,'$g_retained_flora_seed')]
+
+def terrain_seed_ops():
+    # Host: new seeds for a generated field map (-1 for siege scenes, which are fixed).
+    return [(assign,'$g_retained_terrain_seed',-1),(assign,'$g_retained_river_seed',-1),(assign,'$g_retained_flora_seed',-1),
+        (try_begin),(eq,'$g_retained_siege',0),
+            (store_random_in_range,'$g_retained_terrain_seed',1,1000000),(store_random_in_range,'$g_retained_river_seed',1,1000000),
+            (store_random_in_range,'$g_retained_flora_seed',1,1000000),
+            ]+apply_terrain_seeds('$g_retained_scene')+[
+        (try_end)]
 
 def participant_loops(ops):
     out=[]
@@ -70,6 +88,8 @@ def install_scripts(scripts):
         (player_set_slot,':player',6004,0),(player_set_slot,':player',6006,0),
         (player_set_slot,':player',ROSTER_SPAWNED,0),(player_set_slot,':player',CONFIRMED,0),
         (player_set_slot,':player',player_context.POST_BATTLE_SLOT,0),
+        (multiplayer_send_4_int_to_player,':player',multiplayer_event_multiplayer_campaign_server_events,
+            EV_TERRAIN_SEEDS,'$g_retained_terrain_seed','$g_retained_river_seed','$g_retained_flora_seed'),
         (multiplayer_send_3_int_to_player,':player',multiplayer_event_multiplayer_campaign_server_events,
             67,'$g_retained_scene','mt_native_session_probe'),
         (call_script,'script_coop_ctx_before_battle',':player',':team'),
@@ -133,6 +153,7 @@ def install_scripts(scripts):
         (call_script,'script_coop_retained_register_party',':target',1,':defender'),
         (call_script,'script_coop_retained_invite',':requester',0),
         (try_begin),(ge,':defender',1),(call_script,'script_coop_retained_invite',':defender',1),(try_end),
+        ]+terrain_seed_ops()+[
         (start_multiplayer_mission,'mt_native_session_probe','$g_retained_scene',1),
         (assign,reg0,1),
     ])
@@ -389,7 +410,14 @@ def install_scripts(scripts):
         if name=='multiplayer_campaign_server_events':
             ops[:]=[op for op in ops if not(isinstance(op,tuple) and op[0]==ge and op[1]=='$g_cycle_roster_party')]
             ops[:]=[(store_script_param,':retained_event',1),
-                (try_begin),(eq,':retained_event',83),
+                # Generated battle maps: the host's seeds, applied before the scene loads (67).
+                (try_begin),(eq,':retained_event',67),(ge,'$g_retained_terrain_seed',0),
+                    (store_script_param,':seeded_scene',2),]+apply_terrain_seeds(':seeded_scene')+[
+                (try_end),
+                (try_begin),(eq,':retained_event',EV_TERRAIN_SEEDS),
+                    (store_script_param,'$g_retained_terrain_seed',2),(store_script_param,'$g_retained_river_seed',3),
+                    (store_script_param,'$g_retained_flora_seed',4),
+                (else_try),(eq,':retained_event',83),
                     (store_script_param,':agent',2),(store_script_param,':team',3),(store_script_param,':group',4),
                     (ge,':agent',0),(is_between,':team',0,2),(agent_is_active,':agent'),
                     (agent_set_team,':agent',':team'),(agent_set_group,':agent',':group'),
@@ -406,7 +434,7 @@ def install_scripts(scripts):
                 ]+player_context.client_server_events()+[
                 (try_end)]+[(neq,':retained_event',event) for event in player_context.CLIENT_EVENT_IDS]+[
                 (neq,':retained_event',79),(neq,':retained_event',83),(neq,':retained_event',85),
-                (neq,':retained_event',87),(neq,':retained_event',88),
+                (neq,':retained_event',87),(neq,':retained_event',88),(neq,':retained_event',EV_TERRAIN_SEEDS),
                 (try_begin),(eq,':retained_event',73),
                     (store_script_param,':map_party',2),(store_script_param,':x',3),(store_script_param,':y',4),
                     (gt,':map_party',0),(set_fixed_point_multiplier,1000),
@@ -659,6 +687,8 @@ def install_missions(missions):
                 (try_for_players,':player',1),(player_is_active,':player'),
                     (player_slot_eq,':player',PARTICIPANT,1),(player_slot_eq,':player',6000,1),
                     (try_begin),(player_slot_eq,':player',CONFIRMED,0),
+                        (multiplayer_send_4_int_to_player,':player',multiplayer_event_multiplayer_campaign_server_events,
+                            EV_TERRAIN_SEEDS,'$g_retained_terrain_seed','$g_retained_river_seed','$g_retained_flora_seed'),
                         (multiplayer_send_3_int_to_player,':player',multiplayer_event_multiplayer_campaign_server_events,67,':scene','mt_native_session_probe'),
                         (player_set_slot,':player',CONFIRMED,1),
                     (try_end),

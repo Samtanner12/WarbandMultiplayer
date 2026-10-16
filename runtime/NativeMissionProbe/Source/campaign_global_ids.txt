@@ -1652,3 +1652,6 @@ g_menu_trace_count
 g_ctx_screen_pending
 g_ctx_screen_frames
 g_ctx_screen_shown
+g_retained_terrain_seed
+g_retained_river_seed
+g_retained_flora_seed
