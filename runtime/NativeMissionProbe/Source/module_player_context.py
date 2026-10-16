@@ -386,7 +386,8 @@ def present_script():
             (eq, '$g_ctx_menu_screen', 0),
             (assign, ':menu', '$g_ctx_menu_next'), (assign, '$g_ctx_menu_next', -1),
             (player_get_slot, ':previous', ':player', MENU_SLOT),
-            (player_set_slot, ':player', MENU_SLOT, ':menu'), (assign, ':handled', 0)]
+            (player_set_slot, ':player', MENU_SLOT, ':menu'), (player_set_slot, ':player', DIALOG_SLOT, 0),
+            (assign, ':handled', 0)]
     for name in MIRRORED_MENUS:
         ops += [(try_begin), (eq, ':menu', 'mnu_' + name),
                 (call_script, 'script_coop_menu_show_' + name, ':player'), (assign, ':handled', 1), (try_end)]
@@ -414,6 +415,8 @@ def present_script():
     ops += debug('present to player {reg56}: menu {reg57}, battle {reg58}, close {reg59}, screen {reg60}') + [
         (try_begin), (eq, '$g_ctx_menu_screen', 1),
         (else_try), (eq, '$g_ctx_menu_battle', 1),
+            # The battle takes over; its after-battle flag (POST_BATTLE_SLOT) marks the player busy.
+            (player_set_slot, ':player', MENU_SLOT, 0), (player_set_slot, ':player', DIALOG_SLOT, 0),
             (multiplayer_send_int_to_player, ':player', SERVER, EV_MENU_CLOSE),
             (call_script, 'script_coop_retained_start', ':player', '$g_encountered_party', 0),
             (try_begin), (eq, reg0, 0), (store_add, ':reason', '$g_retained_reject_reason', 10),
@@ -498,7 +501,7 @@ def start_encounter_script():
             (assign, '$g_player_surrenders', 0), (assign, '$g_enemy_surrenders', 0),
             (assign, '$g_leave_encounter', 0), (assign, '$g_engaged_enemy', 0), (assign, '$new_encounter', 1),
             (assign, '$g_ctx_menu_next', 'mnu_simple_encounter'), (assign, '$g_ctx_menu_battle', 0),
-            (assign, '$g_ctx_menu_screen', 0),
+            (assign, '$g_ctx_menu_screen', 0), (assign, '$g_ctx_dialog', 0), (assign, '$g_ctx_menu_close', 0),
             (call_script, 'script_coop_menu_present', ':player'),
             (call_script, 'script_coop_ctx_exit', ':player'),
         (else_try)] + debug('encounter: legacy multiplayer menu') + [
@@ -595,6 +598,7 @@ def session_scripts():
             (player_get_slot, ':menu', ':player', MENU_SLOT), (gt, ':menu', 0),
             (call_script, 'script_coop_ctx_enter', ':player'),
             (assign, '$g_ctx_menu_next', ':menu'), (assign, '$g_ctx_menu_battle', 0), (assign, '$g_ctx_menu_screen', 0),
+            (assign, '$g_ctx_dialog', 0), (assign, '$g_ctx_menu_close', 0),
             (call_script, 'script_coop_menu_present', ':player'),
             (call_script, 'script_coop_ctx_exit', ':player'),
             ] + commit_ops() + [
@@ -737,7 +741,7 @@ def battle_scripts():
             (assign, '$g_ctx_menu_next', '$auto_menu'),
             (try_begin), (le, '$g_ctx_menu_next', 0), (assign, '$g_ctx_menu_next', 'mnu_captivity_wilderness_check'), (try_end),
             (assign, '$auto_menu', -1), (assign, '$g_ctx_menu_battle', 0), (assign, '$g_ctx_menu_screen', 0),
-            (assign, '$g_ctx_menu_close', 0),
+            (assign, '$g_ctx_menu_close', 0), (assign, '$g_ctx_dialog', 0),
             (call_script, 'script_coop_menu_present', ':player'),
             (call_script, 'script_coop_ctx_exit', ':player'),
             ] + commit_ops() + [
@@ -748,7 +752,7 @@ def battle_scripts():
             (player_set_slot, ':player', POST_BATTLE_SLOT, 0),
             (call_script, 'script_coop_ctx_enter', ':player'),
             (assign, '$g_ctx_menu_next', 'mnu_battle_debrief'), (assign, '$g_ctx_menu_battle', 0),
-            (assign, '$g_ctx_menu_screen', 0),
+            (assign, '$g_ctx_menu_screen', 0), (assign, '$g_ctx_dialog', 0), (assign, '$g_ctx_menu_close', 0),
             (call_script, 'script_coop_menu_present', ':player'),
             (call_script, 'script_coop_ctx_exit', ':player'),
             ] + commit_ops() + [
@@ -897,6 +901,8 @@ def host_client_events():
             (party_add_members, ':test_army', 'trp_swadian_man_at_arms', 3),
             (call_script, 'script_coop_ctx_push_own_roster', ':player_no'),
             (call_script, 'script_coop_save_character', ':player_no'),
+            (assign, reg56, ':player_no'), (party_get_num_companions, reg57, ':test_army')] + debug(
+            'test troops: player {reg56} army now has {reg57} troops') + [
         (else_try), (eq, ':event_type', EV_TAKE_PRISONERS), (store_script_param, ':ctx_a', 3), (store_script_param, ':ctx_b', 4),
             (call_script, 'script_coop_ctx_take_offer', ':player_no', ':ctx_a', ':ctx_b', 0),
         (else_try), (eq, ':event_type', EV_TAKE_COMPANIONS), (store_script_param, ':ctx_a', 3), (store_script_param, ':ctx_b', 4),

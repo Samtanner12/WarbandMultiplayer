@@ -558,6 +558,10 @@ def install_menus(menus):
         ]))
     for menu in menus:
         if menu[0]=='camp':
+            if player_context.TEST_TROOPS_KEY:
+                menu[5].insert(0,('coop_test_troops',[(multiplayer_is_campaign)],'Test build: add 15 troops to my army.',[
+                    (multiplayer_send_int_to_server,player_context.CLIENT,player_context.EV_TEST_TROOPS),
+                    (display_message,'@Test build: asked the host for 15 troops.'),(change_screen_map)]))
             menu[5].insert(0,('retained_join',[(multiplayer_is_campaign)],'Join a nearby battle.',[
                 (assign,'$g_retained_join_attacker',0),(assign,'$g_retained_join_defender',0),
                 (jump_to_menu,'mnu_coop_retained_join')]))
@@ -587,6 +591,25 @@ def install_native_scripts(scripts):
                 (try_end),
                 (leave_encounter),
             (else_try),(multiplayer_is_campaign),(multiplayer_is_server),
+                # Native pauses the world while the player is in a menu: a player answering a
+                # host-run menu or conversation, or whose post-battle menus are still to come,
+                # is not engaged (their window could not show a new encounter).
+                (store_script_param,':busy_party',3),(assign,':busy',0),
+                (try_for_range,':side',0,2),
+                    (assign,':side_party',':busy_party'),(try_begin),(eq,':side',1),(assign,':side_party',':camp_encountered'),(try_end),
+                    (gt,':side_party',0),(party_is_active,':side_party'),
+                    (party_get_player_id,':busy_player',':side_party'),(ge,':busy_player',1),(player_is_active,':busy_player'),
+                    (this_or_next|player_slot_eq,':busy_player',player_context.POST_BATTLE_SLOT,1),
+                    (player_slot_ge,':busy_player',player_context.MENU_SLOT,1),
+                    (assign,':busy',1),
+                (try_end),
+                (eq,':busy',1),
+                # The AI side lets go of this encounter; the busy player keeps their own.
+                (try_begin),(gt,':camp_encountered',0),(party_is_active,':camp_encountered'),(party_is_non_player,':camp_encountered'),
+                    (party_slot_eq,':camp_encountered',slot_party_coop_battle_slot,0),
+                    (party_leave_cur_battle,':camp_encountered'),(try_end),
+                (leave_encounter),
+            (else_try),(multiplayer_is_campaign),(multiplayer_is_server),
                 # Battle cooldown: armies just out of a battle or encounter
                 # cannot be engaged again until it expires. Settlements are exempt.
                 (store_script_param,':cool_party',3),(gt,':cool_party',0),(party_is_active,':cool_party'),
@@ -604,13 +627,6 @@ def install_native_scripts(scripts):
                     (store_current_hours,':ignore_now'),(party_slot_ge,':cool_party',player_context.IGNORED_UNTIL_SLOT,':ignore_now'),
                     (get_party_ai_current_object,':ignore_target',':camp_encountered'),(eq,':ignore_target',':cool_party'),
                     (assign,':cooling',1),(try_end),
-                # Native pauses the world while the player is in a menu: no new encounter for a
-                # player answering a host-run menu or conversation (its window could not show it).
-                (try_begin),(party_get_player_id,':busy_player',':cool_party'),(ge,':busy_player',1),
-                    (this_or_next|player_slot_eq,':busy_player',player_context.POST_BATTLE_SLOT,1),
-                    (player_slot_ge,':busy_player',player_context.MENU_SLOT,1),(assign,':cooling',2),(try_end),
-                (ge,':cooling',1),
-                (try_begin),(eq,':cooling',2),(leave_encounter),(try_end),
                 (eq,':cooling',1),
                 (party_leave_cur_battle,':cool_party'),
                 (try_begin),(gt,':camp_encountered',0),(party_is_active,':camp_encountered'),
