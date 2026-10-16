@@ -305,8 +305,18 @@ def install_scripts(scripts):
         (try_end),
     ])
     for name,ops in scripts:
+        if name=='coop_center_lock_acquire':
+            ops.extend([(store_script_param,':trace_player',1),(store_script_param,':trace_center',2),
+                (assign,reg56,':trace_player'),(assign,reg57,':trace_center')]+player_context.debug('town: player {reg56} entered center {reg57}'))
+        if name=='coop_center_lock_release':
+            ops.extend([(store_script_param,':trace_player',1),(assign,reg56,':trace_player'),
+                (store_add,':trace_party',multiplayer_campaign_player_parties_begin,':trace_player'),
+                (party_get_attached_to,reg57,':trace_party')]+player_context.debug('town: player {reg56} left; party now attached to {reg57}'))
         if name=='coop_recover_player_encounter':
-            ops[0:0]=[(store_script_param,':unstick_player',1),(player_get_party_id,':unstick_party',':unstick_player'),
+            # F8 also frees a player held in a town.
+            ops[0:0]=[(store_script_param,':unstick_player',1),
+                (call_script,'script_coop_center_lock_release',':unstick_player'),
+                (player_get_party_id,':unstick_party',':unstick_player'),
                 (call_script,'script_coop_retained_unstick_party',':unstick_party'),
                 (call_script,'script_coop_retained_relocate_party',':unstick_party',1)]
         if name=='coop_player_hydrate':
